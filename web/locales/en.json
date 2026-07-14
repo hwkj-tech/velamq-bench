@@ -1,0 +1,455 @@
+{
+  "app": {
+    "subtitle": "MQTT load console",
+    "theme": "Toggle theme"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "runs": "Runs",
+    "compare": "Compare",
+    "scenarios": "Scenarios",
+    "templates": "Templates",
+    "settings": "Settings"
+  },
+  "common": {
+    "refresh": "Refresh",
+    "new": "New",
+    "save": "Save",
+    "edit": "Edit",
+    "delete": "Delete",
+    "close": "Close",
+    "remove": "Remove",
+    "run": "Run",
+    "test": "Test",
+    "unknown": "unknown",
+    "none": "none",
+    "loading": "Loading...",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "status": {
+    "idle": "idle",
+    "pending": "pending",
+    "running": "running",
+    "completed": "completed",
+    "stopped": "stopped",
+    "failed": "failed"
+  },
+  "charts": {
+    "emptyThroughput": "No throughput data",
+    "emptyLatency": "No latency data",
+    "emptyConnections": "No connection data",
+    "emptyErrors": "No error data"
+  },
+  "fields": {
+    "name": "Name",
+    "protocol": "Protocol",
+    "host": "Host",
+    "port": "Port",
+    "websocketPath": "WebSocket path",
+    "size": "Size",
+    "path": "Path",
+    "column": "Column",
+    "width": "Width",
+    "description": "Description",
+    "mode": "Mode",
+    "clients": "Clients",
+    "topic": "Topic",
+    "payload": "Payload",
+    "clientId": "Client id",
+    "partitions": "Partitions",
+    "distribution": "Distribution",
+    "ratePerSec": "Rate/s",
+    "from": "From",
+    "to": "To",
+    "durationMs": "Duration ms",
+    "baseline": "Baseline",
+    "peak": "Peak",
+    "peakMs": "Peak ms",
+    "periodMs": "Period ms",
+    "title": "Title",
+    "detail": "Detail"
+  },
+  "a11y": {
+    "primaryNavigation": "Primary navigation",
+    "language": "Language",
+    "removeWorkload": "Remove workload",
+    "removeStep": "Remove step"
+  },
+  "bind": {
+    "system": "System default",
+    "autoRandom": "Auto random",
+    "autoRoundRobin": "Auto round robin",
+    "manualRandom": "Manual random",
+    "manualRoundRobin": "Manual round robin"
+  },
+  "payloadKind": {
+    "fixedBytes": "Fixed bytes",
+    "jsonTemplate": "JSON template",
+    "csvReplay": "CSV replay",
+    "counter": "Counter"
+  },
+  "protocol": {
+    "mqtt": "MQTT",
+    "mqtts": "MQTTS",
+    "ws": "MQTT over WebSocket",
+    "wss": "MQTT over WSS"
+  },
+  "quick": {
+    "title": "Quick Bench",
+    "scenario": "Scenario",
+    "adHoc": "Ad-hoc run",
+    "host": "Broker host",
+    "port": "Port",
+    "mode": "Mode",
+    "clients": "Clients",
+    "start": "Start run",
+    "starting": "Starting..."
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "subtitle": "Live runtime state, recent runs, and regression space.",
+    "viewRuns": "View runs",
+    "activeRuns": "Active runs",
+    "regressions": "Regressions vs baseline",
+    "recentRuns": "Recent runs",
+    "noActive": "No active run",
+    "noRegressions": "No regression signals yet.",
+    "table": {
+      "scenario": "Scenario",
+      "status": "Status",
+      "startedAt": "Started at"
+    },
+    "kpi": {
+      "active": "Active",
+      "recent": "Recent",
+      "failed": "Failed",
+      "status": "Runtime"
+    }
+  },
+  "runs": {
+    "title": "Runs",
+    "subtitle": "History from the v2 run model.",
+    "empty": "No runs yet.",
+    "workloadCount": "{count} workloads",
+    "compareAction": "Select to compare",
+    "exitCompare": "Exit compare",
+    "selectForCompare": "Select \"{name}\" for comparison",
+    "confirmDelete": "Delete run \"{name}\"? Related metric snapshots and notes will also be removed.",
+    "deleted": "Run deleted",
+    "table": {
+      "name": "Name",
+      "status": "Status",
+      "workloads": "Workloads",
+      "startedAt": "Started at",
+      "actions": "Actions"
+    }
+  },
+  "compare": {
+    "title": "Compare",
+    "subtitle": "Select 2-4 runs for KPI deltas and chart overlays.",
+    "empty": "Pick at least two runs to compare.",
+    "selectRuns": "Select runs",
+    "kpiDelta": "KPI delta",
+    "table": {
+      "run": "Run",
+      "published": "Published",
+      "publishRate": "Pub/s",
+      "errorRate": "Error/s"
+    },
+    "charts": {
+      "publishRate": "Publish rate",
+      "p95": "P95 latency",
+      "p99": "P99 latency",
+      "errors": "Errors"
+    }
+  },
+  "scenarios": {
+    "title": "Scenarios",
+    "subtitle": "Saved workload plans and baselines.",
+    "new": "New Scenario",
+    "newName": "New Scenario",
+    "noDescription": "No description",
+    "untagged": "untagged",
+    "empty": "Create your first scenario with the builder.",
+    "detail": "Scenario detail",
+    "runAgain": "Run again",
+    "workloads": "Workloads",
+    "clientCount": "{count} clients",
+    "runTimeline": "Run timeline",
+    "noRuns": "No runs for this scenario yet.",
+    "confirmDelete": "Delete scenario \"{name}\"? Existing runs will be kept.",
+    "deleted": "Scenario deleted"
+  },
+  "builder": {
+    "title": "Scenario Builder",
+    "subtitle": "Broker, workloads, then schedule.",
+    "stepsLabel": "builder steps",
+    "steps": {
+      "broker": "Broker",
+      "workloads": "Workloads",
+      "profile": "Profile"
+    },
+    "workloadName": "{kind} workload",
+    "savedBroker": "Saved broker",
+    "oneOffBroker": "One-off broker",
+    "brokerProfile": "Broker profile",
+    "testConnection": "Test connection",
+    "connectProfile": "Connect profile",
+    "messageProfile": "Message profile",
+    "addStep": "Add step",
+    "addWorkload": "Add workload",
+    "stageStrategy": "Stage strategy",
+    "parallel": "Parallel",
+    "sequential": "Sequential",
+    "totalDurationMs": "Total duration ms",
+    "sampleIntervalMs": "Sample interval ms",
+    "nicBind": "NIC bind",
+    "bindInterfaces": "Bind interfaces",
+    "bindInterfacesPlaceholder": "comma-separated IPs",
+    "saveAndRun": "Save & Run",
+    "runOnce": "Run once",
+    "startFrom": "Start from",
+    "blankScenario": "Custom",
+    "fromTemplateOption": "Template preset",
+    "template": "Template",
+    "applyTemplate": "Apply template",
+    "fromTemplate": "Started from template: {name}",
+    "modes": {
+      "pub": "Publish",
+      "sub": "Subscribe",
+      "conn": "Connection"
+    },
+    "distribution": {
+      "client_id": "Client ID",
+      "round_robin": "Round robin",
+      "random": "Random"
+    }
+  },
+  "loadShape": {
+    "flat": "Flat",
+    "ramp": "Ramp",
+    "step": "Step",
+    "soak": "Soak",
+    "spike": "Spike"
+  },
+  "runDetail": {
+    "title": "Run detail",
+    "tabsLabel": "run detail tabs",
+    "loading": "Loading run detail...",
+    "addNote": "Add note",
+    "baseline": "Baseline",
+    "markBaseline": "Mark baseline",
+    "export": "Export chart",
+    "exported": "Report exported",
+    "exportFormat": "Export format",
+    "exportPdf": "PDF report",
+    "exportSvg": "SVG chart",
+    "exportCsv": "CSV data",
+    "stop": "Stop",
+    "latencyBand": "Latency band",
+    "errorTrend": "Error trend",
+    "recentErrors": "Recent errors",
+    "frozenConfig": "Frozen config",
+    "searchLogs": "Search logs",
+    "pause": "Pause",
+    "resume": "Resume",
+    "runNotes": "Run notes",
+    "addAnnotation": "Add annotation",
+    "timeline": "Timeline",
+    "noAnnotations": "No annotations yet.",
+    "metrics": {
+      "published": "Published",
+      "received": "Received",
+      "errorRate": "Error rate",
+      "connected": "Connected",
+      "connectRate": "Connect/s"
+    },
+    "latency": {
+      "lines": "Lines",
+      "histogram": "Histogram",
+      "heatmap": "Heatmap",
+      "log": "Log"
+    },
+    "throughput": {
+      "perWorkload": "Per workload",
+      "aggregate": "Aggregate"
+    },
+    "units": {
+      "events": "events",
+      "eventsPerSecond": "events/s"
+    },
+    "logLevels": {
+      "all": "All",
+      "info": "Info",
+      "warn": "Warn",
+      "error": "Error"
+    },
+    "tabs": {
+      "overview": "Overview",
+      "latency": "Latency",
+      "throughput": "Throughput",
+      "connections": "Connections",
+      "errors": "Errors",
+      "logs": "Logs",
+      "config": "Config",
+      "notes": "Notes"
+    }
+  },
+  "templates": {
+    "title": "Templates",
+    "note": "Browse presets, then use one as the starting point for a new scenario.",
+    "noDescription": "No description",
+    "useTemplate": "Use template",
+    "preview": "Preview",
+    "hidePreview": "Hide preview",
+    "workloadName": "{mode} workload",
+    "meta": "{mode} · {clients} clients · {seconds}s",
+    "empty": "No templates yet.",
+    "notFound": "Template not found.",
+    "brokerSuffix": "broker",
+    "payloadSuffix": "payload",
+    "defaults": {
+      "tpl-default-pub-smoke": {
+        "name": "Publish Smoke",
+        "description": "Small publish baseline with timestamp payloads."
+      },
+      "tpl-default-sub-fanout": {
+        "name": "Subscriber Fanout",
+        "description": "Subscriber-side fanout baseline."
+      },
+      "tpl-default-conn-ramp": {
+        "name": "Connection Ramp",
+        "description": "Connection ramp for broker session capacity checks."
+      },
+      "tpl-default-pub-throughput": {
+        "name": "Publish Throughput",
+        "description": "Sustained publish throughput baseline with medium payloads."
+      },
+      "tpl-default-latency-probe": {
+        "name": "Latency Probe",
+        "description": "Timestamp payload probe for latency percentile checks."
+      },
+      "tpl-default-pub-soak": {
+        "name": "Publish Soak",
+        "description": "Long-running steady publish test for stability checks."
+      },
+      "tpl-default-sub-soak": {
+        "name": "Subscriber Soak",
+        "description": "Long-running subscriber fanout stability test."
+      },
+      "tpl-default-conn-storm": {
+        "name": "Connection Storm",
+        "description": "Short high-rate connection churn test for session admission limits."
+      },
+      "tpl-default-large-payload": {
+        "name": "Large Payload Publish",
+        "description": "Publish baseline for bandwidth and packet-size pressure."
+      },
+      "tpl-default-qos1-publish": {
+        "name": "QoS1 Publish",
+        "description": "QoS1 publish baseline for acknowledgement overhead checks."
+      },
+      "tpl-default-iot-low-rate": {
+        "name": "IoT Low Rate",
+        "description": "Many low-frequency publishers for IoT-style workloads."
+      },
+      "tpl-default-mqtts-pub-smoke": {
+        "name": "MQTTS Publish Smoke",
+        "description": "Secure MQTT/TLS publish smoke test on the standard 8883 port."
+      },
+      "tpl-default-ws-pub-smoke": {
+        "name": "WebSocket Publish Smoke",
+        "description": "MQTT over WebSocket publish smoke test using the /mqtt path."
+      },
+      "tpl-default-ws-sub-fanout": {
+        "name": "WebSocket Subscriber Fanout",
+        "description": "Subscriber fanout baseline over MQTT WebSocket transport."
+      },
+      "tpl-default-wss-pub-smoke": {
+        "name": "WSS Publish Smoke",
+        "description": "Secure MQTT over WebSocket publish smoke test on the 8084 port."
+      }
+    }
+  },
+  "settings": {
+    "tabs": {
+      "brokers": "Brokers",
+      "payloads": "Payloads",
+      "network": "Network",
+      "preferences": "Preferences",
+      "import": "Import"
+    },
+    "brokers": {
+      "title": "Broker Profiles",
+      "subtitle": "Reusable MQTT broker endpoints.",
+      "new": "New broker",
+      "edit": "Edit broker",
+      "keepalive": "Keepalive seconds",
+      "cleanSession": "Clean session",
+      "clean": "clean",
+      "persistent": "persistent",
+      "empty": "No broker profiles yet.",
+      "confirmDelete": "Delete this broker profile?",
+      "saveBeforeTesting": "Save before testing.",
+      "connectedIn": "Connected in {ms}ms",
+      "connectionFailed": "Connection failed",
+      "local": "Local broker"
+    },
+    "payloads": {
+      "title": "Payload Profiles",
+      "subtitle": "Reusable payload generators.",
+      "new": "New payload",
+      "edit": "Edit payload",
+      "generator": "Generator",
+      "withTimestamp": "With timestamp",
+      "template": "Template",
+      "varsJson": "Vars JSON",
+      "loopWhenDone": "Loop when done",
+      "empty": "No payload profiles yet.",
+      "confirmDelete": "Delete this payload profile?"
+    },
+    "network": {
+      "title": "Network Bind",
+      "subtitle": "Inspect NICs and choose the default binding strategy for new workloads.",
+      "defaultMode": "Default bind mode",
+      "loopback": "loopback",
+      "usable": "usable",
+      "loading": "Loading interfaces...",
+      "empty": "No interfaces found."
+    },
+    "preferences": {
+      "title": "Preferences",
+      "subtitle": "Local display preferences and client-side regression coloring thresholds.",
+      "language": "Language",
+      "english": "English",
+      "chinese": "Simplified Chinese",
+      "theme": "Theme",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "Follow system",
+      "thresholds": "Regression thresholds",
+      "p95": "P95 latency %",
+      "p99": "P99 latency %",
+      "rate": "Rate delta %",
+      "error": "Error delta pp"
+    },
+    "import": {
+      "title": "Import Bundle",
+      "subtitle": "Import a JSON or ZIP bundle exported from Run Detail.",
+      "bundleJson": "Bundle file",
+      "conflict": "Conflict strategy",
+      "skip": "Skip existing ids",
+      "rename": "Import as copies",
+      "overwrite": "Overwrite existing ids",
+      "action": "Import",
+      "imported": "Bundle imported",
+      "preview": "Preview",
+      "zipPreview": "ZIP bundle selected. The server will validate bundle.json during import.",
+      "runs": "Runs",
+      "snapshots": "Snapshots",
+      "scenarios": "Scenarios",
+      "profiles": "Profiles"
+    }
+  }
+}

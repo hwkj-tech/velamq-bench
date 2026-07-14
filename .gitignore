@@ -1,0 +1,7 @@
+/target
+/data/*.sqlite3
+/data/*.sqlite3-*
+/web/node_modules
+/web/dist
+.DS_Store
+.idea/

@@ -1,0 +1,455 @@
+{
+  "app": {
+    "subtitle": "MQTT 压测控制台",
+    "theme": "切换主题"
+  },
+  "nav": {
+    "dashboard": "仪表盘",
+    "runs": "运行记录",
+    "compare": "对比",
+    "scenarios": "场景",
+    "templates": "模板",
+    "settings": "设置"
+  },
+  "common": {
+    "refresh": "刷新",
+    "new": "新建",
+    "save": "保存",
+    "edit": "编辑",
+    "delete": "删除",
+    "close": "关闭",
+    "remove": "移除",
+    "run": "运行",
+    "test": "测试",
+    "unknown": "未知",
+    "none": "无",
+    "loading": "加载中...",
+    "previous": "上一步",
+    "next": "下一步"
+  },
+  "status": {
+    "idle": "空闲",
+    "pending": "等待中",
+    "running": "运行中",
+    "completed": "已完成",
+    "stopped": "已停止",
+    "failed": "失败"
+  },
+  "charts": {
+    "emptyThroughput": "暂无吞吐数据",
+    "emptyLatency": "暂无延迟数据",
+    "emptyConnections": "暂无连接数据",
+    "emptyErrors": "暂无错误数据"
+  },
+  "fields": {
+    "name": "名称",
+    "protocol": "协议",
+    "host": "主机",
+    "port": "端口",
+    "websocketPath": "WebSocket 路径",
+    "size": "大小",
+    "path": "路径",
+    "column": "列名",
+    "width": "宽度",
+    "description": "描述",
+    "mode": "模式",
+    "clients": "客户端数",
+    "topic": "主题",
+    "payload": "Payload",
+    "clientId": "客户端 ID",
+    "partitions": "分区数",
+    "distribution": "分发策略",
+    "ratePerSec": "速率/秒",
+    "from": "起始",
+    "to": "目标",
+    "durationMs": "持续时间 ms",
+    "baseline": "基线",
+    "peak": "峰值",
+    "peakMs": "峰值 ms",
+    "periodMs": "周期 ms",
+    "title": "标题",
+    "detail": "详情"
+  },
+  "a11y": {
+    "primaryNavigation": "主导航",
+    "language": "语言",
+    "removeWorkload": "移除工作负载",
+    "removeStep": "移除阶段"
+  },
+  "bind": {
+    "system": "系统默认",
+    "autoRandom": "自动随机",
+    "autoRoundRobin": "自动轮询",
+    "manualRandom": "手动随机",
+    "manualRoundRobin": "手动轮询"
+  },
+  "payloadKind": {
+    "fixedBytes": "固定字节",
+    "jsonTemplate": "JSON 模板",
+    "csvReplay": "CSV 回放",
+    "counter": "计数器"
+  },
+  "protocol": {
+    "mqtt": "MQTT",
+    "mqtts": "MQTTS",
+    "ws": "MQTT over WebSocket",
+    "wss": "MQTT over WSS"
+  },
+  "quick": {
+    "title": "快速压测",
+    "scenario": "场景",
+    "adHoc": "临时运行",
+    "host": "Broker 地址",
+    "port": "端口",
+    "mode": "模式",
+    "clients": "客户端数",
+    "start": "启动运行",
+    "starting": "启动中..."
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "subtitle": "查看实时状态、最近运行与回归空间。",
+    "viewRuns": "查看运行",
+    "activeRuns": "活动运行",
+    "regressions": "相对基线回归",
+    "recentRuns": "最近运行",
+    "noActive": "暂无活动运行",
+    "noRegressions": "暂无回归信号。",
+    "table": {
+      "scenario": "场景",
+      "status": "状态",
+      "startedAt": "开始时间"
+    },
+    "kpi": {
+      "active": "活动",
+      "recent": "最近",
+      "failed": "失败",
+      "status": "运行时"
+    }
+  },
+  "runs": {
+    "title": "运行记录",
+    "subtitle": "来自 v2 运行模型的历史记录。",
+    "empty": "暂无运行记录。",
+    "workloadCount": "{count} 个 workload",
+    "compareAction": "选择对比",
+    "exitCompare": "退出对比",
+    "selectForCompare": "选择「{name}」参与对比",
+    "confirmDelete": "确定删除运行记录「{name}」吗？相关指标快照和备注也会删除。",
+    "deleted": "运行记录已删除",
+    "table": {
+      "name": "名称",
+      "status": "状态",
+      "workloads": "Workload",
+      "startedAt": "开始时间",
+      "actions": "操作"
+    }
+  },
+  "compare": {
+    "title": "对比",
+    "subtitle": "选择 2-4 次运行，查看 KPI 差异和曲线叠加。",
+    "empty": "至少选择两次运行进行对比。",
+    "selectRuns": "选择运行",
+    "kpiDelta": "KPI 差异",
+    "table": {
+      "run": "运行",
+      "published": "已发布",
+      "publishRate": "发布/秒",
+      "errorRate": "错误/秒"
+    },
+    "charts": {
+      "publishRate": "发布速率",
+      "p95": "P95 延迟",
+      "p99": "P99 延迟",
+      "errors": "错误"
+    }
+  },
+  "scenarios": {
+    "title": "场景",
+    "subtitle": "保存的 workload 计划与基线。",
+    "new": "新建场景",
+    "newName": "新建场景",
+    "noDescription": "暂无描述",
+    "untagged": "未打标签",
+    "empty": "使用构建器创建第一个场景。",
+    "detail": "场景详情",
+    "runAgain": "再次运行",
+    "workloads": "Workload",
+    "clientCount": "{count} 个客户端",
+    "runTimeline": "运行时间线",
+    "noRuns": "这个场景还没有运行记录。",
+    "confirmDelete": "确定删除场景「{name}」吗？已有运行记录会保留。",
+    "deleted": "场景已删除"
+  },
+  "builder": {
+    "title": "场景构建器",
+    "subtitle": "依次配置 Broker、workload 和调度参数。",
+    "stepsLabel": "构建步骤",
+    "steps": {
+      "broker": "Broker",
+      "workloads": "Workload",
+      "profile": "配置"
+    },
+    "workloadName": "{kind} workload",
+    "savedBroker": "已保存 Broker",
+    "oneOffBroker": "一次性 Broker",
+    "brokerProfile": "Broker 配置",
+    "testConnection": "测试连接",
+    "connectProfile": "连接曲线",
+    "messageProfile": "消息曲线",
+    "addStep": "添加阶段",
+    "addWorkload": "添加 workload",
+    "stageStrategy": "阶段策略",
+    "parallel": "并行",
+    "sequential": "串行",
+    "totalDurationMs": "总持续时间 ms",
+    "sampleIntervalMs": "采样间隔 ms",
+    "nicBind": "网卡绑定",
+    "bindInterfaces": "绑定接口",
+    "bindInterfacesPlaceholder": "用逗号分隔 IP",
+    "saveAndRun": "保存并运行",
+    "runOnce": "运行一次",
+    "startFrom": "创建方式",
+    "blankScenario": "自定义",
+    "fromTemplateOption": "从模板开始",
+    "template": "模板",
+    "applyTemplate": "套用模板",
+    "fromTemplate": "已从模板预填：{name}",
+    "modes": {
+      "pub": "发布",
+      "sub": "订阅",
+      "conn": "连接"
+    },
+    "distribution": {
+      "client_id": "客户端 ID",
+      "round_robin": "轮询",
+      "random": "随机"
+    }
+  },
+  "loadShape": {
+    "flat": "平稳",
+    "ramp": "爬坡",
+    "step": "阶梯",
+    "soak": "浸泡",
+    "spike": "尖峰"
+  },
+  "runDetail": {
+    "title": "运行详情",
+    "tabsLabel": "运行详情标签",
+    "loading": "正在加载运行详情...",
+    "addNote": "添加备注",
+    "baseline": "基线",
+    "markBaseline": "标记基线",
+    "export": "导出图表",
+    "exported": "报告已导出",
+    "exportFormat": "导出格式",
+    "exportPdf": "PDF 报告",
+    "exportSvg": "SVG 图表",
+    "exportCsv": "CSV 数据",
+    "stop": "停止",
+    "latencyBand": "延迟带",
+    "errorTrend": "错误趋势",
+    "recentErrors": "最近错误",
+    "frozenConfig": "固定配置",
+    "searchLogs": "搜索日志",
+    "pause": "暂停",
+    "resume": "继续",
+    "runNotes": "运行备注",
+    "addAnnotation": "添加标注",
+    "timeline": "时间线",
+    "noAnnotations": "暂无标注。",
+    "metrics": {
+      "published": "已发布",
+      "received": "已接收",
+      "errorRate": "错误率",
+      "connected": "已连接",
+      "connectRate": "连接/秒"
+    },
+    "latency": {
+      "lines": "曲线",
+      "histogram": "直方图",
+      "heatmap": "热力图",
+      "log": "对数"
+    },
+    "throughput": {
+      "perWorkload": "按 workload",
+      "aggregate": "聚合"
+    },
+    "units": {
+      "events": "次",
+      "eventsPerSecond": "次/秒"
+    },
+    "logLevels": {
+      "all": "全部",
+      "info": "信息",
+      "warn": "警告",
+      "error": "错误"
+    },
+    "tabs": {
+      "overview": "概览",
+      "latency": "延迟",
+      "throughput": "吞吐",
+      "connections": "连接",
+      "errors": "错误",
+      "logs": "日志",
+      "config": "配置",
+      "notes": "备注"
+    }
+  },
+  "templates": {
+    "title": "模板",
+    "note": "浏览预设模板，并把它作为新建场景的起点。",
+    "noDescription": "暂无描述",
+    "useTemplate": "使用模板",
+    "preview": "预览",
+    "hidePreview": "收起预览",
+    "workloadName": "{mode} workload",
+    "meta": "{mode} · {clients} 个客户端 · {seconds}s",
+    "empty": "暂无模板。",
+    "notFound": "未找到模板。",
+    "brokerSuffix": "Broker",
+    "payloadSuffix": "Payload",
+    "defaults": {
+      "tpl-default-pub-smoke": {
+        "name": "发布冒烟",
+        "description": "小规模发布基线，payload 携带时间戳。"
+      },
+      "tpl-default-sub-fanout": {
+        "name": "订阅扇出",
+        "description": "订阅侧扇出基线。"
+      },
+      "tpl-default-conn-ramp": {
+        "name": "连接爬坡",
+        "description": "用于检查 Broker 会话容量的连接爬坡。"
+      },
+      "tpl-default-pub-throughput": {
+        "name": "发布吞吐",
+        "description": "中等 payload 的持续发布吞吐基线。"
+      },
+      "tpl-default-latency-probe": {
+        "name": "延迟探针",
+        "description": "使用时间戳 payload 检查延迟百分位。"
+      },
+      "tpl-default-pub-soak": {
+        "name": "发布长稳",
+        "description": "长时间稳定发布，用于观察稳定性。"
+      },
+      "tpl-default-sub-soak": {
+        "name": "订阅长稳",
+        "description": "长时间订阅扇出稳定性测试。"
+      },
+      "tpl-default-conn-storm": {
+        "name": "连接风暴",
+        "description": "短时间高连接速率，用于检查会话接入上限。"
+      },
+      "tpl-default-large-payload": {
+        "name": "大 payload 发布",
+        "description": "用于带宽和大包压力的发布基线。"
+      },
+      "tpl-default-qos1-publish": {
+        "name": "QoS1 发布",
+        "description": "用于检查 QoS1 确认开销的发布基线。"
+      },
+      "tpl-default-iot-low-rate": {
+        "name": "IoT 低频上报",
+        "description": "大量低频发布端，模拟 IoT 上报负载。"
+      },
+      "tpl-default-mqtts-pub-smoke": {
+        "name": "MQTTS 发布冒烟",
+        "description": "使用标准 8883 端口的 MQTT/TLS 安全发布冒烟测试。"
+      },
+      "tpl-default-ws-pub-smoke": {
+        "name": "WebSocket 发布冒烟",
+        "description": "通过 /mqtt 路径进行 MQTT over WebSocket 发布冒烟测试。"
+      },
+      "tpl-default-ws-sub-fanout": {
+        "name": "WebSocket 订阅扇出",
+        "description": "基于 MQTT WebSocket 传输的订阅扇出基线。"
+      },
+      "tpl-default-wss-pub-smoke": {
+        "name": "WSS 发布冒烟",
+        "description": "使用 8084 端口的安全 MQTT over WebSocket 发布冒烟测试。"
+      }
+    }
+  },
+  "settings": {
+    "tabs": {
+      "brokers": "Broker",
+      "payloads": "Payload",
+      "network": "网络",
+      "preferences": "偏好",
+      "import": "导入"
+    },
+    "brokers": {
+      "title": "Broker 配置",
+      "subtitle": "可复用的 MQTT Broker 端点。",
+      "new": "新建 Broker",
+      "edit": "编辑 Broker",
+      "keepalive": "Keepalive 秒数",
+      "cleanSession": "清理会话",
+      "clean": "清理会话",
+      "persistent": "持久会话",
+      "empty": "暂无 Broker 配置。",
+      "confirmDelete": "确认删除这个 Broker 配置吗？",
+      "saveBeforeTesting": "请先保存再测试。",
+      "connectedIn": "{ms}ms 内连接成功",
+      "connectionFailed": "连接失败",
+      "local": "本地 Broker"
+    },
+    "payloads": {
+      "title": "Payload 配置",
+      "subtitle": "可复用的 payload 生成器。",
+      "new": "新建 Payload",
+      "edit": "编辑 Payload",
+      "generator": "生成器",
+      "withTimestamp": "带时间戳",
+      "template": "模板",
+      "varsJson": "变量 JSON",
+      "loopWhenDone": "结束后循环",
+      "empty": "暂无 Payload 配置。",
+      "confirmDelete": "确认删除这个 Payload 配置吗？"
+    },
+    "network": {
+      "title": "网络绑定",
+      "subtitle": "查看网卡，并为新 workload 选择默认绑定策略。",
+      "defaultMode": "默认绑定模式",
+      "loopback": "回环",
+      "usable": "可用",
+      "loading": "正在加载网卡...",
+      "empty": "未发现网卡。"
+    },
+    "preferences": {
+      "title": "偏好设置",
+      "subtitle": "本地显示偏好和客户端侧回归着色阈值。",
+      "language": "语言",
+      "english": "英文",
+      "chinese": "简体中文",
+      "theme": "主题",
+      "light": "浅色",
+      "dark": "深色",
+      "system": "跟随系统",
+      "thresholds": "回归阈值",
+      "p95": "P95 延迟 %",
+      "p99": "P99 延迟 %",
+      "rate": "速率变化 %",
+      "error": "错误变化百分点"
+    },
+    "import": {
+      "title": "导入 Bundle",
+      "subtitle": "导入从运行详情导出的 JSON 或 ZIP bundle。",
+      "bundleJson": "Bundle 文件",
+      "conflict": "冲突策略",
+      "skip": "跳过已有 ID",
+      "rename": "作为副本导入",
+      "overwrite": "覆盖已有 ID",
+      "action": "导入",
+      "imported": "Bundle 已导入",
+      "preview": "预览",
+      "zipPreview": "已选择 ZIP bundle，导入时服务端会校验 bundle.json。",
+      "runs": "运行",
+      "snapshots": "快照",
+      "scenarios": "场景",
+      "profiles": "配置"
+    }
+  }
+}
