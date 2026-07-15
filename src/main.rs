@@ -54,13 +54,24 @@ use crate::{
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let data_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("data")
+    let runtime_root = runtime_root();
+    let data_path = std::env::var_os("VELAMQ_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| runtime_root.join("data"))
         .join("velamq-bench.sqlite3");
     let storage = Storage::new(data_path).await?;
     let manager = BenchManager::new(storage);
 
-    let web_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web");
+    let packaged_web_root = runtime_root.join("web");
+    let web_root = std::env::var_os("VELAMQ_WEB_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            packaged_web_root
+                .join("dist/index.html")
+                .exists()
+                .then_some(packaged_web_root)
+        })
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web"));
     let dist_dir = web_root.join("dist");
     let index = dist_dir.join("index.html");
     let static_files = ServeDir::new(dist_dir).fallback(ServeFile::new(index));
@@ -165,6 +176,14 @@ async fn main() -> anyhow::Result<()> {
     info!("velamq-bench listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn runtime_root() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 async fn add_deprecation_headers(request: Request, next: Next) -> Response {

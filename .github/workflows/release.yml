@@ -1,0 +1,239 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  build-linux-musl:
+    name: Build ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            label: linux-x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            label: linux-aarch64-musl
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must use semantic versioning, for example v0.1.0" >&2
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build musl binaries
+        run: cross build --locked --release --target "${{ matrix.target }}" --bins
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
+          mkdir -p "dist/${package}/web"
+          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${package}/"
+          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${package}/"
+          cp -R web/dist "dist/${package}/web/dist"
+          cp README.md CHANGELOG.md "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.label }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  build-macos:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            label: macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            label: macos-aarch64
+
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must use semantic versioning, for example v0.1.0" >&2
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Build macOS binaries
+        run: cargo build --locked --release --target "${{ matrix.target }}" --bins
+
+      - name: Package release archive
+        shell: bash
+        run: |
+          package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
+          mkdir -p "dist/${package}/web"
+          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${package}/"
+          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${package}/"
+          cp -R web/dist "dist/${package}/web/dist"
+          cp README.md CHANGELOG.md "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.label }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  build-windows:
+    name: Build windows-x86_64
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+            throw 'Release tag must use semantic versioning, for example v0.1.0'
+          }
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Rust target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Build Windows binaries
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc --bins
+
+      - name: Package release archive
+        shell: pwsh
+        run: |
+          $package = "velamq-bench-$env:RELEASE_TAG-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "dist/$package/web" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-bench.exe" "dist/$package/"
+          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-connbench.exe" "dist/$package/"
+          Copy-Item -Recurse "web/dist" "dist/$package/web/dist"
+          Copy-Item README.md, CHANGELOG.md "dist/$package/"
+          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - build-linux-musl
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release create "${RELEASE_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "VelaMQ Bench ${RELEASE_TAG}" \
+              --generate-notes
+          fi
+          gh release upload "${RELEASE_TAG}" release-assets/* --clobber

@@ -14,6 +14,19 @@ By default the app binds to `127.0.0.1:8088`. Override it with:
 VELAMQ_BIND=127.0.0.1:8090 cargo run
 ```
 
+Release packages load the frontend from `web/dist` next to the executable and store SQLite data in `data/`. Override these locations with `VELAMQ_WEB_ROOT` and `VELAMQ_DATA_DIR`.
+
+## Automated Release
+
+Push a semantic version tag to build Linux, macOS, and Windows binaries and publish them to GitHub Releases. Linux x86_64 and ARM64 packages use musl libc; macOS packages cover Intel and Apple Silicon; Windows uses x86_64 MSVC:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The Release workflow can also be started manually from GitHub Actions with a version tag. Each archive contains `velamq-bench`, `velamq-connbench`, the built web console, README, and CHANGELOG. A `SHA256SUMS` file is attached to every release.
+
 The server serves the built Vite app from `web/dist`.
 
 ## Frontend
