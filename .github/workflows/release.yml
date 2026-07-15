@@ -46,10 +46,10 @@ jobs:
           fi
 
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -79,7 +79,7 @@ jobs:
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
 
       - name: Upload release archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.label }}
           path: dist/*.tar.gz
@@ -111,10 +111,10 @@ jobs:
           fi
 
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -144,7 +144,7 @@ jobs:
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
 
       - name: Upload release archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.label }}
           path: dist/*.tar.gz
@@ -165,10 +165,10 @@ jobs:
           }
 
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -198,7 +198,7 @@ jobs:
           Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
 
       - name: Upload release archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows-x86_64
           path: dist/*.zip
@@ -216,7 +216,7 @@ jobs:
 
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: release-assets
@@ -229,10 +229,11 @@ jobs:
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release create "${RELEASE_TAG}" \
-              --target "${GITHUB_SHA}" \
+              --verify-tag \
               --title "VelaMQ Bench ${RELEASE_TAG}" \
               --generate-notes
           fi
