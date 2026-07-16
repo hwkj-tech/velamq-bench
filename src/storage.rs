@@ -9,10 +9,13 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::model::{
-    Annotation, AnnotationCategory, AuthConfig, BenchConfig, BenchMode, BenchReport, BenchRun,
-    BenchSpecimen, BenchStatus, BenchTemplate, BrokerProfile, BrokerProtocol, MetricSnapshot,
+    AgentCapabilities, AgentLogPoint, AgentMetricPoint, AgentNode, AgentNodeUpdate,
+    AgentRegistration, AgentStatus, AgentTask, AgentTaskCreate, AgentTaskMetrics, AgentTaskSpec,
+    AgentTaskStatus, Annotation, AnnotationCategory, AuthConfig, BenchConfig, BenchMode,
+    BenchReport, BenchRun, BenchSpecimen, BenchStatus, BenchTemplate, BrokerProfile,
+    BrokerProtocol, DistributedRun, DistributedRunStatus, MetricSnapshot, Mqtt5Config, MqttVersion,
     PayloadKind, PayloadProfile, QosLevel, Run, RunStats, RunStatus, RunWorkload, Scenario,
-    SpecimenUpdate, TemplateDraft, TlsConfig, Workload,
+    SchedulingStrategy, SpecimenUpdate, TemplateDraft, TlsConfig, Workload, normalize_labels,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -35,6 +38,26 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0005_broker_protocol",
         include_str!("storage/migrations/0005_broker_protocol.sql"),
+    ),
+    (
+        "0006_broker_connection_options",
+        include_str!("storage/migrations/0006_broker_connection_options.sql"),
+    ),
+    (
+        "0007_agent_nodes",
+        include_str!("storage/migrations/0007_agent_nodes.sql"),
+    ),
+    (
+        "0008_agent_tasks",
+        include_str!("storage/migrations/0008_agent_tasks.sql"),
+    ),
+    (
+        "0009_distributed_runs",
+        include_str!("storage/migrations/0009_distributed_runs.sql"),
+    ),
+    (
+        "0010_agent_task_telemetry",
+        include_str!("storage/migrations/0010_agent_task_telemetry.sql"),
     ),
 ];
 
@@ -75,6 +98,19 @@ impl Storage {
                 "TEXT NOT NULL DEFAULT 'mqtt'",
             )?;
             ensure_column(&conn, "broker_profiles", "websocket_path", "TEXT")?;
+            ensure_column(
+                &conn,
+                "broker_profiles",
+                "mqtt_version",
+                "TEXT NOT NULL DEFAULT 'v3_1_1'",
+            )?;
+            ensure_column(
+                &conn,
+                "broker_profiles",
+                "connection_timeout_secs",
+                "INTEGER NOT NULL DEFAULT 10",
+            )?;
+            ensure_column(&conn, "broker_profiles", "mqtt5_json", "TEXT")?;
             seed_default_templates(&conn)?;
             ensure_column(
                 &conn,
@@ -133,6 +169,545 @@ impl Storage {
             ensure_column(&conn, "metric_snapshots", "run_workload_id", "TEXT")?;
             backfill::backfill_legacy_runs(&mut conn)?;
             Ok(())
+        })
+        .await?
+    }
+
+    pub async fn register_agent(
+        &self,
+        registration: AgentRegistration,
+        token_hash: String,
+    ) -> Result<AgentNode> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<AgentNode> {
+            let conn = Connection::open(path.as_ref())?;
+            let now = Utc::now();
+            let existing: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT id, created_at FROM agent_nodes WHERE instance_id = ?1",
+                    params![registration.instance_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let (id, created_at) =
+                existing.unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), now.to_rfc3339()));
+            let labels = normalize_labels(registration.labels);
+            conn.execute(
+                r#"
+                INSERT INTO agent_nodes (
+                    id, instance_id, name, token_hash, enabled, draining, labels_json,
+                    capabilities_json, current_task_id, last_seen_at, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, 1, 0, ?5, ?6, NULL, ?7, ?8, ?7)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    name = excluded.name,
+                    token_hash = excluded.token_hash,
+                    labels_json = excluded.labels_json,
+                    capabilities_json = excluded.capabilities_json,
+                    current_task_id = NULL,
+                    last_seen_at = excluded.last_seen_at,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    id,
+                    registration.instance_id,
+                    registration.name.trim(),
+                    token_hash,
+                    serde_json::to_string(&labels)?,
+                    serde_json::to_string(&registration.capabilities)?,
+                    now.to_rfc3339(),
+                    created_at,
+                ],
+            )?;
+            load_agent_node(&conn, &id)?.ok_or_else(|| anyhow!("registered agent was not found"))
+        })
+        .await?
+    }
+
+    pub async fn list_agent_nodes(&self) -> Result<Vec<AgentNode>> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<Vec<AgentNode>> {
+            let conn = Connection::open(path.as_ref())?;
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, instance_id, name, enabled, draining, labels_json, capabilities_json,
+                       current_task_id, last_seen_at, created_at, updated_at
+                  FROM agent_nodes
+              ORDER BY name COLLATE NOCASE, id
+                "#,
+            )?;
+            collect_rows(stmt.query_map([], map_agent_node)?)
+        })
+        .await?
+    }
+
+    pub async fn get_agent_node(&self, id: &str) -> Result<Option<AgentNode>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentNode>> {
+            let conn = Connection::open(path.as_ref())?;
+            load_agent_node(&conn, &id)
+        })
+        .await?
+    }
+
+    pub async fn agent_token_hash(&self, id: &str) -> Result<Option<String>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+            let conn = Connection::open(path.as_ref())?;
+            Ok(conn
+                .query_row(
+                    "SELECT token_hash FROM agent_nodes WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
+        .await?
+    }
+
+    pub async fn heartbeat_agent(
+        &self,
+        id: &str,
+        capabilities: Option<AgentCapabilities>,
+        current_task_id: Option<String>,
+        lease_id: Option<String>,
+    ) -> Result<Option<AgentNode>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentNode>> {
+            let mut conn = Connection::open(path.as_ref())?;
+            let tx = conn.transaction()?;
+            let now = Utc::now();
+            let updated = if let Some(capabilities) = capabilities {
+                tx.execute(
+                    "UPDATE agent_nodes SET capabilities_json = ?1, current_task_id = ?2, last_seen_at = ?3, updated_at = ?3 WHERE id = ?4",
+                    params![serde_json::to_string(&capabilities)?, current_task_id, now.to_rfc3339(), id],
+                )?
+            } else {
+                tx.execute(
+                    "UPDATE agent_nodes SET current_task_id = ?1, last_seen_at = ?2, updated_at = ?2 WHERE id = ?3",
+                    params![current_task_id, now.to_rfc3339(), id],
+                )?
+            };
+            if updated == 0 { return Ok(None); }
+            if let (Some(task_id), Some(lease_id)) = (current_task_id, lease_id) {
+                tx.execute(
+                    "UPDATE agent_tasks SET lease_expires_at = ?1, updated_at = ?2 WHERE id = ?3 AND node_id = ?4 AND lease_id = ?5 AND status IN ('leased', 'running')",
+                    params![(now + chrono::Duration::seconds(15)).to_rfc3339(), now.to_rfc3339(), task_id, id, lease_id],
+                )?;
+            }
+            tx.commit()?;
+            load_agent_node(&conn, &id)
+        })
+        .await?
+    }
+
+    pub async fn create_agent_task(&self, request: AgentTaskCreate) -> Result<AgentTask> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<AgentTask> {
+            let conn = Connection::open(path.as_ref())?;
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = Utc::now();
+            let idempotency_key = request
+                .idempotency_key
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| format!("task-{id}"));
+            conn.execute(
+                r#"
+                INSERT INTO agent_tasks (
+                    id, distributed_run_id, node_id, attempt, idempotency_key, spec_json,
+                    status, stop_requested, created_at, updated_at
+                ) VALUES (?1, ?2, ?3, 0, ?4, ?5, 'queued', 0, ?6, ?6)
+                "#,
+                params![
+                    id,
+                    request.distributed_run_id,
+                    request.node_id,
+                    idempotency_key,
+                    serde_json::to_string(&request.spec)?,
+                    now.to_rfc3339(),
+                ],
+            )?;
+            load_agent_task(&conn, &id)?.ok_or_else(|| anyhow!("created agent task was not found"))
+        })
+        .await?
+    }
+
+    pub async fn list_agent_tasks(&self, node_id: Option<String>) -> Result<Vec<AgentTask>> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<Vec<AgentTask>> {
+            let conn = Connection::open(path.as_ref())?;
+            let sql = format!(
+                "{} {}",
+                AGENT_TASK_SELECT,
+                if node_id.is_some() {
+                    "WHERE node_id = ?1 ORDER BY created_at DESC"
+                } else {
+                    "ORDER BY created_at DESC"
+                }
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            if let Some(node_id) = node_id {
+                collect_rows(stmt.query_map(params![node_id], map_agent_task)?)
+            } else {
+                collect_rows(stmt.query_map([], map_agent_task)?)
+            }
+        })
+        .await?
+    }
+
+    pub async fn lease_next_agent_task(&self, node_id: &str) -> Result<Option<AgentTask>> {
+        let path = Arc::clone(&self.path);
+        let node_id = node_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentTask>> {
+            let mut conn = Connection::open(path.as_ref())?;
+            let now = Utc::now();
+            let tx = conn.transaction()?;
+            tx.execute(
+                "UPDATE agent_tasks SET status = 'queued', lease_id = NULL, lease_expires_at = NULL, updated_at = ?1 WHERE status = 'leased' AND lease_expires_at < ?1",
+                params![now.to_rfc3339()],
+            )?;
+            tx.execute(
+                "UPDATE agent_tasks SET status = 'expired', finished_at = ?1, updated_at = ?1, error = 'agent lease expired while running' WHERE status = 'running' AND lease_expires_at < ?1",
+                params![now.to_rfc3339()],
+            )?;
+            let enabled: Option<(bool, bool)> = tx
+                .query_row(
+                    "SELECT enabled, draining FROM agent_nodes WHERE id = ?1",
+                    params![node_id],
+                    |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, i64>(1)? != 0)),
+                )
+                .optional()?;
+            if !matches!(enabled, Some((true, false))) {
+                tx.commit()?;
+                return Ok(None);
+            }
+            let task_id: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM agent_tasks WHERE node_id = ?1 AND status = 'queued' ORDER BY created_at LIMIT 1",
+                    params![node_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(task_id) = task_id else { tx.commit()?; return Ok(None); };
+            let lease_id = uuid::Uuid::new_v4().to_string();
+            let expires = now + chrono::Duration::seconds(15);
+            tx.execute(
+                "UPDATE agent_tasks SET status = 'leased', attempt = attempt + 1, lease_id = ?1, lease_expires_at = ?2, updated_at = ?3 WHERE id = ?4 AND status = 'queued'",
+                params![lease_id, expires.to_rfc3339(), now.to_rfc3339(), task_id],
+            )?;
+            tx.commit()?;
+            load_agent_task(&conn, &task_id)
+        })
+        .await?
+    }
+
+    pub async fn ack_agent_task(
+        &self,
+        task_id: &str,
+        node_id: &str,
+        lease_id: &str,
+    ) -> Result<Option<AgentTask>> {
+        self.transition_agent_task(task_id, node_id, lease_id, "leased", "running", None)
+            .await
+    }
+
+    async fn transition_agent_task(
+        &self,
+        task_id: &str,
+        node_id: &str,
+        lease_id: &str,
+        from: &str,
+        to: &str,
+        error: Option<String>,
+    ) -> Result<Option<AgentTask>> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        let node_id = node_id.to_string();
+        let lease_id = lease_id.to_string();
+        let from = from.to_string();
+        let to = to.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentTask>> {
+            let conn = Connection::open(path.as_ref())?;
+            let now = Utc::now();
+            let terminal = matches!(to.as_str(), "completed" | "failed" | "stopped");
+            let changed = conn.execute(
+                "UPDATE agent_tasks SET status = ?1, started_at = CASE WHEN ?1 = 'running' THEN COALESCE(started_at, ?2) ELSE started_at END, finished_at = CASE WHEN ?3 THEN ?2 ELSE finished_at END, error = ?4, updated_at = ?2 WHERE id = ?5 AND node_id = ?6 AND lease_id = ?7 AND status = ?8 AND lease_expires_at >= ?2",
+                params![to, now.to_rfc3339(), terminal, error, task_id, node_id, lease_id, from],
+            )?;
+            if changed == 0 { return Ok(None); }
+            load_agent_task(&conn, &task_id)
+        })
+        .await?
+    }
+
+    pub async fn complete_agent_task(
+        &self,
+        task_id: &str,
+        node_id: &str,
+        lease_id: &str,
+        status: AgentTaskStatus,
+        error: Option<String>,
+    ) -> Result<Option<AgentTask>> {
+        if !matches!(
+            status,
+            AgentTaskStatus::Completed | AgentTaskStatus::Failed | AgentTaskStatus::Stopped
+        ) {
+            return Err(anyhow!("invalid terminal agent task status"));
+        }
+        self.transition_agent_task(
+            task_id,
+            node_id,
+            lease_id,
+            "running",
+            status.as_str(),
+            error,
+        )
+        .await
+    }
+
+    pub async fn request_agent_task_stop(&self, task_id: &str) -> Result<Option<AgentTask>> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentTask>> {
+            let conn = Connection::open(path.as_ref())?;
+            let changed = conn.execute(
+                "UPDATE agent_tasks SET stop_requested = 1, updated_at = ?1 WHERE id = ?2 AND status IN ('queued', 'leased', 'running')",
+                params![Utc::now().to_rfc3339(), task_id],
+            )?;
+            if changed == 0 { return Ok(None); }
+            load_agent_task(&conn, &task_id)
+        })
+        .await?
+    }
+
+    pub async fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTask>> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentTask>> {
+            let conn = Connection::open(path.as_ref())?;
+            load_agent_task(&conn, &task_id)
+        })
+        .await?
+    }
+
+    pub async fn insert_agent_metrics(
+        &self,
+        task_id: &str,
+        node_id: &str,
+        lease_id: &str,
+        points: Vec<AgentMetricPoint>,
+    ) -> Result<usize> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        let node_id = node_id.to_string();
+        let lease_id = lease_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<usize> {
+            let mut conn = Connection::open(path.as_ref())?;
+            verify_task_lease(&conn, &task_id, &node_id, &lease_id)?;
+            let tx = conn.transaction()?;
+            let mut inserted = 0;
+            for point in points.into_iter().take(500) {
+                inserted += tx.execute(
+                    "INSERT OR IGNORE INTO agent_task_metrics (task_id, sequence, snapshot_json, received_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![task_id, point.sequence as i64, serde_json::to_string(&point.snapshot)?, Utc::now().to_rfc3339()],
+                )?;
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await?
+    }
+
+    pub async fn insert_agent_logs(
+        &self,
+        task_id: &str,
+        node_id: &str,
+        lease_id: &str,
+        points: Vec<AgentLogPoint>,
+    ) -> Result<usize> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        let node_id = node_id.to_string();
+        let lease_id = lease_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<usize> {
+            let mut conn = Connection::open(path.as_ref())?;
+            verify_task_lease(&conn, &task_id, &node_id, &lease_id)?;
+            let tx = conn.transaction()?;
+            let mut inserted = 0;
+            for point in points.into_iter().take(1000) {
+                inserted += tx.execute(
+                    "INSERT OR IGNORE INTO agent_task_logs (task_id, sequence, run_workload_id, log_json, received_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![task_id, point.sequence as i64, point.run_workload_id, serde_json::to_string(&point.log)?, Utc::now().to_rfc3339()],
+                )?;
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await?
+    }
+
+    pub async fn distributed_task_metrics(&self, run_id: &str) -> Result<Vec<AgentTaskMetrics>> {
+        let path = Arc::clone(&self.path);
+        let run_id = run_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<AgentTaskMetrics>> {
+            let conn = Connection::open(path.as_ref())?;
+            let mut task_stmt = conn.prepare("SELECT id, node_id FROM agent_tasks WHERE distributed_run_id = ?1 ORDER BY created_at")?;
+            let tasks = task_stmt.query_map(params![run_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            tasks.into_iter().map(|(task_id, node_id)| {
+                let mut stmt = conn.prepare("SELECT snapshot_json FROM agent_task_metrics WHERE task_id = ?1 ORDER BY sequence")?;
+                let snapshots = stmt.query_map(params![task_id], |row| {
+                    let json: String = row.get(0)?;
+                    serde_json::from_str(&json).map_err(|err| to_sql_error(err.into()))
+                })?.collect::<rusqlite::Result<Vec<MetricSnapshot>>>()?;
+                Ok(AgentTaskMetrics { task_id, node_id, snapshots })
+            }).collect()
+        })
+        .await?
+    }
+
+    pub async fn agent_task_logs(&self, task_id: &str) -> Result<Vec<AgentLogPoint>> {
+        let path = Arc::clone(&self.path);
+        let task_id = task_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<AgentLogPoint>> {
+            let conn = Connection::open(path.as_ref())?;
+            let mut stmt = conn.prepare("SELECT sequence, run_workload_id, log_json FROM agent_task_logs WHERE task_id = ?1 ORDER BY sequence")?;
+            collect_rows(stmt.query_map(params![task_id], |row| {
+                let json: String = row.get(2)?;
+                Ok(AgentLogPoint {
+                    sequence: row.get::<_, i64>(0)? as u64,
+                    run_workload_id: row.get(1)?,
+                    log: serde_json::from_str(&json).map_err(|err| to_sql_error(err.into()))?,
+                })
+            })?)
+        })
+        .await?
+    }
+
+    pub async fn create_distributed_run(
+        &self,
+        id: String,
+        scenario: Scenario,
+        strategy: SchedulingStrategy,
+        node_ids: Vec<String>,
+        required_labels: Vec<String>,
+    ) -> Result<DistributedRun> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<DistributedRun> {
+            let conn = Connection::open(path.as_ref())?;
+            let now = Utc::now();
+            conn.execute(
+                r#"
+                INSERT INTO distributed_runs (
+                    id, scenario_id, name, scenario_snapshot_json, strategy, node_ids_json,
+                    required_labels_json, status, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8)
+                "#,
+                params![
+                    id,
+                    scenario.id,
+                    scenario.name,
+                    serde_json::to_string(&scenario)?,
+                    strategy.as_str(),
+                    serde_json::to_string(&node_ids)?,
+                    serde_json::to_string(&required_labels)?,
+                    now.to_rfc3339(),
+                ],
+            )?;
+            load_distributed_run(&conn, &id)?
+                .ok_or_else(|| anyhow!("created distributed run was not found"))
+        })
+        .await?
+    }
+
+    pub async fn distributed_runs(&self) -> Result<Vec<DistributedRun>> {
+        let path = Arc::clone(&self.path);
+        tokio::task::spawn_blocking(move || -> Result<Vec<DistributedRun>> {
+            let conn = Connection::open(path.as_ref())?;
+            let mut stmt =
+                conn.prepare("SELECT id FROM distributed_runs ORDER BY created_at DESC")?;
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            ids.iter()
+                .map(|id| {
+                    refresh_distributed_run(&conn, id)?;
+                    load_distributed_run(&conn, id)?
+                        .ok_or_else(|| anyhow!("distributed run disappeared"))
+                })
+                .collect()
+        })
+        .await?
+    }
+
+    pub async fn distributed_run(&self, id: &str) -> Result<Option<DistributedRun>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<DistributedRun>> {
+            let conn = Connection::open(path.as_ref())?;
+            refresh_distributed_run(&conn, &id)?;
+            load_distributed_run(&conn, &id)
+        })
+        .await?
+    }
+
+    pub async fn stop_distributed_run(&self, id: &str) -> Result<Option<DistributedRun>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<DistributedRun>> {
+            let mut conn = Connection::open(path.as_ref())?;
+            let tx = conn.transaction()?;
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM distributed_runs WHERE id = ?1)",
+                params![id], |row| row.get(0)
+            )?;
+            if !exists { return Ok(None); }
+            let now = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE agent_tasks SET stop_requested = 1, updated_at = ?1 WHERE distributed_run_id = ?2 AND status IN ('queued', 'leased', 'running')",
+                params![now, id],
+            )?;
+            tx.execute(
+                "UPDATE distributed_runs SET status = 'stopped', stopped_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )?;
+            tx.commit()?;
+            load_distributed_run(&conn, &id)
+        })
+        .await?
+    }
+
+    pub async fn update_agent_node(
+        &self,
+        id: &str,
+        update: AgentNodeUpdate,
+    ) -> Result<Option<AgentNode>> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<AgentNode>> {
+            let conn = Connection::open(path.as_ref())?;
+            let Some(current) = load_agent_node(&conn, &id)? else { return Ok(None); };
+            let name = update.name.unwrap_or(current.name).trim().to_string();
+            let labels = normalize_labels(update.labels.unwrap_or(current.labels));
+            let enabled = update.enabled.unwrap_or(current.enabled);
+            let draining = update.draining.unwrap_or(current.draining);
+            conn.execute(
+                "UPDATE agent_nodes SET name = ?1, labels_json = ?2, enabled = ?3, draining = ?4, updated_at = ?5 WHERE id = ?6",
+                params![name, serde_json::to_string(&labels)?, i64::from(enabled), i64::from(draining), Utc::now().to_rfc3339(), id],
+            )?;
+            load_agent_node(&conn, &id)
+        })
+        .await?
+    }
+
+    pub async fn delete_agent_node(&self, id: &str) -> Result<bool> {
+        let path = Arc::clone(&self.path);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool> {
+            let conn = Connection::open(path.as_ref())?;
+            Ok(conn.execute("DELETE FROM agent_nodes WHERE id = ?1", params![id])? > 0)
         })
         .await?
     }
@@ -986,8 +1561,8 @@ impl<'a> BrokerProfileRepo<'a> {
     pub fn list(&self) -> Result<Vec<BrokerProfile>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT id, name, protocol, host, port, websocket_path, tls_json, auth_json,
-                   keepalive_secs, clean_session, created_at, updated_at
+            SELECT id, name, protocol, mqtt_version, host, port, websocket_path, tls_json, auth_json,
+                   keepalive_secs, connection_timeout_secs, clean_session, mqtt5_json, created_at, updated_at
               FROM broker_profiles
           ORDER BY updated_at DESC
             "#,
@@ -998,8 +1573,8 @@ impl<'a> BrokerProfileRepo<'a> {
     pub fn get(&self, id: &str) -> Result<Option<BrokerProfile>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT id, name, protocol, host, port, websocket_path, tls_json, auth_json,
-                   keepalive_secs, clean_session, created_at, updated_at
+            SELECT id, name, protocol, mqtt_version, host, port, websocket_path, tls_json, auth_json,
+                   keepalive_secs, connection_timeout_secs, clean_session, mqtt5_json, created_at, updated_at
               FROM broker_profiles
              WHERE id = ?1
             "#,
@@ -1020,36 +1595,47 @@ impl<'a> BrokerProfileRepo<'a> {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()?;
+        let mqtt5_json = profile
+            .mqtt5
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
         self.conn.execute(
             r#"
             INSERT INTO broker_profiles (
-                id, name, protocol, host, port, websocket_path, tls_json, auth_json,
-                keepalive_secs, clean_session, created_at, updated_at
+                id, name, protocol, mqtt_version, host, port, websocket_path, tls_json, auth_json,
+                keepalive_secs, connection_timeout_secs, clean_session, mqtt5_json, created_at, updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 protocol = excluded.protocol,
+                mqtt_version = excluded.mqtt_version,
                 host = excluded.host,
                 port = excluded.port,
                 websocket_path = excluded.websocket_path,
                 tls_json = excluded.tls_json,
                 auth_json = excluded.auth_json,
                 keepalive_secs = excluded.keepalive_secs,
+                connection_timeout_secs = excluded.connection_timeout_secs,
                 clean_session = excluded.clean_session,
+                mqtt5_json = excluded.mqtt5_json,
                 updated_at = excluded.updated_at
             "#,
             params![
                 profile.id,
                 profile.name,
                 profile.protocol.as_str(),
+                profile.mqtt_version.as_str(),
                 profile.host,
                 profile.port as i64,
                 profile.websocket_path,
                 tls_json,
                 auth_json,
                 profile.keepalive_secs as i64,
+                profile.connection_timeout_secs as i64,
                 if profile.clean_session { 1 } else { 0 },
+                mqtt5_json,
                 profile.created_at.to_rfc3339(),
                 profile.updated_at.to_rfc3339(),
             ],
@@ -1761,23 +2347,246 @@ fn list_snapshots_v2(
 
 fn map_broker_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrokerProfile> {
     let protocol: String = row.get(2)?;
-    let tls_json: Option<String> = row.get(6)?;
-    let auth_json: Option<String> = row.get(7)?;
-    let created_at: String = row.get(10)?;
-    let updated_at: String = row.get(11)?;
+    let mqtt_version: String = row.get(3)?;
+    let tls_json: Option<String> = row.get(7)?;
+    let auth_json: Option<String> = row.get(8)?;
+    let mqtt5_json: Option<String> = row.get(12)?;
+    let created_at: String = row.get(13)?;
+    let updated_at: String = row.get(14)?;
     Ok(BrokerProfile {
         id: row.get(0)?,
         name: row.get(1)?,
         protocol: BrokerProtocol::from_storage(&protocol),
-        host: row.get(3)?,
-        port: row.get::<_, i64>(4)? as u16,
-        websocket_path: row.get(5)?,
+        mqtt_version: MqttVersion::from_storage(&mqtt_version),
+        host: row.get(4)?,
+        port: row.get::<_, i64>(5)? as u16,
+        websocket_path: row.get(6)?,
         tls: parse_json_option::<TlsConfig>(tls_json)?,
         auth: parse_json_option::<AuthConfig>(auth_json)?,
-        keepalive_secs: row.get::<_, i64>(8)? as u16,
-        clean_session: row.get::<_, i64>(9)? != 0,
+        keepalive_secs: row.get::<_, i64>(9)? as u16,
+        connection_timeout_secs: row.get::<_, i64>(10)? as u16,
+        clean_session: row.get::<_, i64>(11)? != 0,
+        mqtt5: parse_json_option::<Mqtt5Config>(mqtt5_json)?,
         created_at: parse_utc(&created_at).map_err(to_sql_error)?,
         updated_at: parse_utc(&updated_at).map_err(to_sql_error)?,
+    })
+}
+
+fn load_agent_node(conn: &Connection, id: &str) -> Result<Option<AgentNode>> {
+    Ok(conn
+        .query_row(
+            r#"
+            SELECT id, instance_id, name, enabled, draining, labels_json, capabilities_json,
+                   current_task_id, last_seen_at, created_at, updated_at
+              FROM agent_nodes
+             WHERE id = ?1
+            "#,
+            params![id],
+            map_agent_node,
+        )
+        .optional()?)
+}
+
+const AGENT_TASK_SELECT: &str = r#"
+    SELECT id, distributed_run_id, node_id, attempt, idempotency_key, spec_json, status,
+           lease_id, lease_expires_at, stop_requested, started_at, finished_at, error,
+           created_at, updated_at
+      FROM agent_tasks
+"#;
+
+fn verify_task_lease(
+    conn: &Connection,
+    task_id: &str,
+    node_id: &str,
+    lease_id: &str,
+) -> Result<()> {
+    let valid: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_tasks WHERE id = ?1 AND node_id = ?2 AND lease_id = ?3 AND status = 'running' AND lease_expires_at >= ?4)",
+        params![task_id, node_id, lease_id, Utc::now().to_rfc3339()],
+        |row| row.get(0),
+    )?;
+    if !valid {
+        return Err(anyhow!("agent task lease is invalid or expired"));
+    }
+    Ok(())
+}
+
+fn load_agent_task(conn: &Connection, id: &str) -> Result<Option<AgentTask>> {
+    let sql = format!("{AGENT_TASK_SELECT} WHERE id = ?1");
+    Ok(conn
+        .query_row(&sql, params![id], map_agent_task)
+        .optional()?)
+}
+
+fn map_agent_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTask> {
+    let spec_json: String = row.get(5)?;
+    let status: String = row.get(6)?;
+    let parse_optional_time = |index| -> rusqlite::Result<Option<DateTime<Utc>>> {
+        row.get::<_, Option<String>>(index)?
+            .map(|value| parse_utc(&value).map_err(to_sql_error))
+            .transpose()
+    };
+    Ok(AgentTask {
+        id: row.get(0)?,
+        distributed_run_id: row.get(1)?,
+        node_id: row.get(2)?,
+        attempt: row.get::<_, i64>(3)? as u32,
+        idempotency_key: row.get(4)?,
+        spec: parse_json::<AgentTaskSpec>(&spec_json)?,
+        status: AgentTaskStatus::from_storage(&status),
+        lease_id: row.get(7)?,
+        lease_expires_at: parse_optional_time(8)?,
+        stop_requested: row.get::<_, i64>(9)? != 0,
+        started_at: parse_optional_time(10)?,
+        finished_at: parse_optional_time(11)?,
+        error: row.get(12)?,
+        created_at: parse_utc(&row.get::<_, String>(13)?).map_err(to_sql_error)?,
+        updated_at: parse_utc(&row.get::<_, String>(14)?).map_err(to_sql_error)?,
+    })
+}
+
+fn load_distributed_run(conn: &Connection, id: &str) -> Result<Option<DistributedRun>> {
+    let row: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = conn
+        .query_row(
+            r#"
+            SELECT scenario_id, name, strategy, node_ids_json, required_labels_json, status,
+                   created_at, started_at, stopped_at
+              FROM distributed_runs WHERE id = ?1
+            "#,
+            params![id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        scenario_id,
+        name,
+        strategy,
+        node_ids,
+        labels,
+        status,
+        created_at,
+        started_at,
+        stopped_at,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let mut stmt = conn.prepare(&format!(
+        "{AGENT_TASK_SELECT} WHERE distributed_run_id = ?1 ORDER BY created_at"
+    ))?;
+    let tasks = collect_rows(stmt.query_map(params![id], map_agent_task)?)?;
+    Ok(Some(DistributedRun {
+        id: id.to_string(),
+        scenario_id,
+        name,
+        strategy: SchedulingStrategy::from_storage(&strategy),
+        node_ids: parse_json(&node_ids)?,
+        required_labels: parse_json(&labels)?,
+        status: DistributedRunStatus::from_storage(&status),
+        tasks,
+        created_at: parse_utc(&created_at)?,
+        started_at: started_at.map(|value| parse_utc(&value)).transpose()?,
+        stopped_at: stopped_at.map(|value| parse_utc(&value)).transpose()?,
+    }))
+}
+
+fn refresh_distributed_run(conn: &Connection, id: &str) -> Result<()> {
+    let statuses = {
+        let mut stmt =
+            conn.prepare("SELECT status FROM agent_tasks WHERE distributed_run_id = ?1")?;
+        stmt.query_map(params![id], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if statuses.is_empty() {
+        return Ok(());
+    }
+    let active = statuses
+        .iter()
+        .any(|status| matches!(status.as_str(), "leased" | "running"));
+    let queued = statuses.iter().any(|status| status == "queued");
+    let completed = statuses
+        .iter()
+        .filter(|status| status.as_str() == "completed")
+        .count();
+    let failed = statuses
+        .iter()
+        .filter(|status| matches!(status.as_str(), "failed" | "expired"))
+        .count();
+    let stopped = statuses.iter().any(|status| status == "stopped");
+    let status = if active {
+        "running"
+    } else if queued {
+        "pending"
+    } else if completed == statuses.len() {
+        "completed"
+    } else if stopped {
+        "stopped"
+    } else if completed > 0 && failed > 0 {
+        "partial"
+    } else {
+        "failed"
+    };
+    let now = Utc::now().to_rfc3339();
+    let terminal = matches!(status, "completed" | "partial" | "failed" | "stopped");
+    conn.execute(
+        "UPDATE distributed_runs SET status = ?1, started_at = CASE WHEN ?1 = 'running' THEN COALESCE(started_at, ?2) ELSE started_at END, stopped_at = CASE WHEN ?3 THEN COALESCE(stopped_at, ?2) ELSE stopped_at END WHERE id = ?4 AND status != 'stopped'",
+        params![status, now, terminal, id],
+    )?;
+    Ok(())
+}
+
+fn map_agent_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentNode> {
+    let enabled = row.get::<_, i64>(3)? != 0;
+    let draining = row.get::<_, i64>(4)? != 0;
+    let labels_json: String = row.get(5)?;
+    let capabilities_json: String = row.get(6)?;
+    let last_seen_at = parse_utc(&row.get::<_, String>(8)?).map_err(to_sql_error)?;
+    let status = if !enabled {
+        AgentStatus::Disabled
+    } else if Utc::now().signed_duration_since(last_seen_at).num_seconds() > 15 {
+        AgentStatus::Offline
+    } else if draining {
+        AgentStatus::Draining
+    } else if row.get::<_, Option<String>>(7)?.is_some() {
+        AgentStatus::Busy
+    } else {
+        AgentStatus::Online
+    };
+    Ok(AgentNode {
+        id: row.get(0)?,
+        instance_id: row.get(1)?,
+        name: row.get(2)?,
+        status,
+        enabled,
+        draining,
+        labels: parse_json(&labels_json)?,
+        capabilities: parse_json(&capabilities_json)?,
+        current_task_id: row.get(7)?,
+        last_seen_at,
+        created_at: parse_utc(&row.get::<_, String>(9)?).map_err(to_sql_error)?,
+        updated_at: parse_utc(&row.get::<_, String>(10)?).map_err(to_sql_error)?,
     })
 }
 
@@ -2060,6 +2869,9 @@ fn map_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<MetricSnapshot> {
         connect_rate: row.get(10)?,
         error_rate: row.get(11)?,
         latency_count: row.get::<_, i64>(12)? as u64,
+        latency_window_count: 0,
+        latency_window_sum_us: 0,
+        latency_histogram: Vec::new(),
         latency_avg_ms: row.get(13)?,
         latency_min_ms: row.get(14)?,
         latency_p50_ms: row.get(15)?,

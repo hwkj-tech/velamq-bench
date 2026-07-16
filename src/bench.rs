@@ -5,11 +5,18 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use futures_util::future::join_all;
 use get_if_addrs::{IfAddr, get_if_addrs};
-use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS, Transport};
+use rumqttc::{
+    AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS, TlsConfiguration, Transport,
+};
+use rustls::{
+    ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::{CertificateDer, ServerName, UnixTime},
+};
 use tokio::{
     sync::{Mutex, RwLock, broadcast, watch},
     task::JoinHandle,
@@ -21,8 +28,8 @@ use crate::{
     model::{
         Annotation, AuthConfig, BenchConfig, BenchEvent, BenchMode, BenchReport, BenchRun,
         BenchSpecimen, BenchStatus, BenchTemplate, BrokerProfile, BrokerProtocol, LoadProfile,
-        LoadShape, LogLine, MetricSnapshot, NetworkBindMode, NetworkInterfaceInfo, PayloadKind,
-        PayloadProfile, QosLevel, Run, RunStatus, RunWorkload, RuntimeView, Scenario,
+        LoadShape, LogLine, MetricSnapshot, MqttVersion, NetworkBindMode, NetworkInterfaceInfo,
+        PayloadKind, PayloadProfile, QosLevel, Run, RunStatus, RunWorkload, RuntimeView, Scenario,
         ScenarioStage, SpecimenUpdate, StartBenchRequest, StartResponse, TemplateDraft, Workload,
         WorkloadKind, normalize_websocket_path,
     },
@@ -37,6 +44,47 @@ use crate::{
 const LOG_LIMIT: usize = 300;
 const TIMESTAMP_PREFIX: &[u8] = b"velamq-ts-ns=";
 const TIMESTAMP_SUFFIX: u8 = b';';
+
+#[derive(Debug)]
+struct NoCertificateVerification;
+
+impl ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, RustlsError> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::CryptoProvider::get_default()
+            .expect("rustls crypto provider is installed")
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
 
 #[derive(Debug)]
 pub struct BenchManager {
@@ -303,23 +351,35 @@ impl BenchManager {
         };
         let config = config_from_broker_profile(&profile);
         let started = Instant::now();
+        if config.mqtt_version == MqttVersion::V5_0 {
+            return self
+                .test_broker_connection_v5(profile, config, started)
+                .await
+                .map(Some);
+        }
         let mut mqtt_options =
-            mqtt_options_for_client(format!("velamq-test-{}", Uuid::new_v4()), &config);
+            mqtt_options_for_client(format!("velamq-test-{}", Uuid::new_v4()), &config)?;
         mqtt_options.set_keep_alive(Duration::from_secs(config.keepalive_secs.into()));
         mqtt_options.set_clean_session(true);
         if let Some(username) = config.username.as_deref().filter(|value| !value.is_empty()) {
             mqtt_options.set_credentials(username, config.password.clone().unwrap_or_default());
         }
         let (_client, mut eventloop) = AsyncClient::new(mqtt_options, 10);
-        let result = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match eventloop.poll().await {
-                    Ok(MqttEvent::Incoming(Packet::ConnAck(_))) => return Ok(()),
-                    Ok(_) => {}
-                    Err(err) => return Err(err.to_string()),
+        eventloop
+            .network_options
+            .set_connection_timeout(config.connection_timeout_secs.into());
+        let result = tokio::time::timeout(
+            Duration::from_secs(config.connection_timeout_secs.into()),
+            async {
+                loop {
+                    match eventloop.poll().await {
+                        Ok(MqttEvent::Incoming(Packet::ConnAck(_))) => return Ok(()),
+                        Ok(_) => {}
+                        Err(err) => return Err(err.to_string()),
+                    }
                 }
-            }
-        })
+            },
+        )
         .await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
@@ -346,9 +406,56 @@ impl BenchManager {
                 host: profile.host,
                 port: profile.port,
                 elapsed_ms,
-                error: Some("connection timed out after 3s".to_string()),
+                error: Some(format!(
+                    "connection timed out after {}s",
+                    config.connection_timeout_secs
+                )),
             },
         }))
+    }
+
+    async fn test_broker_connection_v5(
+        &self,
+        profile: BrokerProfile,
+        config: BenchConfig,
+        started: Instant,
+    ) -> Result<BrokerConnectionTest> {
+        use rumqttc::v5::mqttbytes::v5::Packet as PacketV5;
+        use rumqttc::v5::{AsyncClient as AsyncClientV5, Event as EventV5};
+
+        let options =
+            mqtt5_options_for_client(format!("velamq-test-{}", Uuid::new_v4()), &config, None)?;
+        let (_client, mut eventloop) = AsyncClientV5::new(options, 10);
+        let result = tokio::time::timeout(
+            Duration::from_secs(config.connection_timeout_secs.into()),
+            async {
+                loop {
+                    match eventloop.poll().await {
+                        Ok(EventV5::Incoming(PacketV5::ConnAck(_))) => return Ok(()),
+                        Ok(_) => {}
+                        Err(err) => return Err(err.to_string()),
+                    }
+                }
+            },
+        )
+        .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let error = match result {
+            Ok(Ok(())) => None,
+            Ok(Err(err)) => Some(err),
+            Err(_) => Some(format!(
+                "connection timed out after {}s",
+                config.connection_timeout_secs
+            )),
+        };
+        Ok(BrokerConnectionTest {
+            ok: error.is_none(),
+            profile_id: profile.id,
+            host: profile.host,
+            port: profile.port,
+            elapsed_ms,
+            error,
+        })
     }
 
     pub async fn payload_profiles(&self) -> Result<Vec<PayloadProfile>> {
@@ -1327,7 +1434,34 @@ async fn run_client(
     };
     let qos = qos(config.qos);
 
-    let mut mqtt_options = mqtt_options_for_client(client_id.clone(), &config);
+    if config.mqtt_version == MqttVersion::V5_0 {
+        run_client_v5(
+            index,
+            run_id,
+            config,
+            bind_device,
+            counters,
+            manager,
+            message_shape,
+            stop_rx,
+        )
+        .await;
+        return;
+    }
+
+    let mut mqtt_options = match mqtt_options_for_client(client_id.clone(), &config) {
+        Ok(options) => options,
+        Err(err) => {
+            counters.error();
+            manager
+                .push_log(
+                    "error",
+                    format!("client {client_id} configuration error: {err:#}"),
+                )
+                .await;
+            return;
+        }
+    };
     mqtt_options.set_keep_alive(Duration::from_secs(config.keepalive_secs.into()));
     mqtt_options.set_clean_session(config.clean_session);
     if let Some(username) = config.username.as_deref().filter(|value| !value.is_empty()) {
@@ -1335,6 +1469,9 @@ async fn run_client(
     }
 
     let (client, mut eventloop) = AsyncClient::new(mqtt_options, 100);
+    eventloop
+        .network_options
+        .set_connection_timeout(config.connection_timeout_secs.into());
     apply_bind_device(&mut eventloop, bind_device.as_deref());
     if config.mode == BenchMode::Sub {
         if let Err(err) = client.subscribe(topic.clone(), qos).await {
@@ -1429,6 +1566,166 @@ async fn run_client(
     }
 }
 
+async fn run_client_v5(
+    index: u64,
+    run_id: String,
+    config: Arc<BenchConfig>,
+    bind_device: Option<String>,
+    counters: Arc<WorkloadSampler>,
+    manager: Arc<BenchManager>,
+    message_shape: Option<LoadShape>,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    use rumqttc::v5::mqttbytes::v5::Packet as PacketV5;
+    use rumqttc::v5::{AsyncClient as AsyncClientV5, Event as EventV5};
+
+    let client_id = config.client_id_for(index);
+    let topic = config.topic_for(index);
+    let static_payload = if config.payload_timestamp {
+        Vec::new()
+    } else {
+        build_payload(config.payload_size, index, None)
+    };
+    let options = match mqtt5_options_for_client(client_id.clone(), &config, bind_device.as_deref())
+    {
+        Ok(options) => options,
+        Err(err) => {
+            counters.error();
+            manager
+                .push_log(
+                    "error",
+                    format!("client {client_id} MQTT 5 configuration error: {err:#}"),
+                )
+                .await;
+            return;
+        }
+    };
+    let (client, mut eventloop) = AsyncClientV5::new(options, 100);
+    if config.mode == BenchMode::Sub {
+        if let Err(err) = client.subscribe(topic.clone(), qos_v5(config.qos)).await {
+            counters.error();
+            manager
+                .push_log(
+                    "error",
+                    format!("client {client_id} failed to enqueue MQTT 5 subscribe: {err}"),
+                )
+                .await;
+            return;
+        }
+    }
+
+    let message_clock = message_shape.map(LoadClock::new);
+    let publish_sleep = tokio::time::sleep(publish_delay(&config, message_clock.as_ref()));
+    tokio::pin!(publish_sleep);
+    let mut connected = false;
+    let mut reported_errors = 0_u8;
+
+    loop {
+        tokio::select! {
+            changed = stop_rx.changed() => {
+                if changed.is_ok() && *stop_rx.borrow() { break; }
+            }
+            _ = &mut publish_sleep, if config.mode == BenchMode::Pub => {
+                let payload = if config.payload_timestamp {
+                    build_payload(config.payload_size, index, Some(unix_timestamp_nanos()))
+                } else {
+                    static_payload.clone()
+                };
+                match client.publish(topic.clone(), qos_v5(config.qos), config.retain, payload).await {
+                    Ok(()) => counters.published(),
+                    Err(err) => {
+                        counters.error();
+                        if reported_errors < 3 {
+                            reported_errors += 1;
+                            manager.push_log("error", format!("client {client_id} MQTT 5 publish error: {err}")).await;
+                        }
+                    }
+                }
+                publish_sleep.as_mut().reset(Instant::now() + publish_delay(&config, message_clock.as_ref()));
+            }
+            event = eventloop.poll() => {
+                match event {
+                    Ok(EventV5::Incoming(PacketV5::ConnAck(_))) => {
+                        if !connected { connected = true; counters.client_connected(); }
+                    }
+                    Ok(EventV5::Incoming(PacketV5::Publish(publish))) => {
+                        counters.received();
+                        if config.payload_timestamp {
+                            if let Some(sent_ns) = parse_payload_timestamp(&publish.payload) {
+                                if let Some(latency) = latency_since(sent_ns) { counters.latency(latency); }
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        counters.error();
+                        if connected { connected = false; counters.client_disconnected(); }
+                        if reported_errors < 3 {
+                            reported_errors += 1;
+                            let binding = bind_device.as_deref().map(|device| format!(" bound to {device}")).unwrap_or_default();
+                            manager.push_log("error", format!("client {client_id}{binding} MQTT 5 eventloop error in run {run_id}: {err}")).await;
+                        }
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                    }
+                }
+            }
+        }
+    }
+    if connected {
+        counters.client_disconnected();
+    }
+}
+
+fn mqtt5_options_for_client(
+    client_id: String,
+    config: &BenchConfig,
+    _bind_device: Option<&str>,
+) -> Result<rumqttc::v5::MqttOptions> {
+    let broker_addr = broker_address_for_config(config);
+    let mut options = rumqttc::v5::MqttOptions::new(client_id, broker_addr, config.port);
+    options.set_keep_alive(Duration::from_secs(config.keepalive_secs.into()));
+    options.set_clean_start(config.clean_session);
+    options.set_connection_timeout(config.connection_timeout_secs.into());
+    if let Some(username) = config.username.as_deref().filter(|value| !value.is_empty()) {
+        options.set_credentials(username, config.password.clone().unwrap_or_default());
+    }
+    match config.protocol {
+        BrokerProtocol::Mqtt => {}
+        BrokerProtocol::Mqtts => {
+            options.set_transport(Transport::tls_with_config(tls_configuration(config)?));
+        }
+        BrokerProtocol::Ws => {
+            options.set_transport(Transport::Ws);
+        }
+        BrokerProtocol::Wss => {
+            options.set_transport(Transport::wss_with_config(tls_configuration(config)?));
+        }
+    }
+    if let Some(mqtt5) = &config.mqtt5 {
+        options.set_session_expiry_interval(mqtt5.session_expiry_interval_secs);
+        options.set_receive_maximum(mqtt5.receive_maximum);
+        options.set_max_packet_size(mqtt5.maximum_packet_size);
+        options.set_topic_alias_max(mqtt5.topic_alias_maximum);
+        options.set_request_problem_info(Some(u8::from(mqtt5.request_problem_information)));
+    }
+    let mut network_options = rumqttc::NetworkOptions::new();
+    network_options.set_connection_timeout(config.connection_timeout_secs.into());
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    if let Some(bind_device) = _bind_device.filter(|value| !value.is_empty()) {
+        network_options.set_bind_device(bind_device);
+    }
+    options.set_network_options(network_options);
+    Ok(options)
+}
+
+fn qos_v5(value: QosLevel) -> rumqttc::v5::mqttbytes::QoS {
+    match value {
+        QosLevel::Qos0 => rumqttc::v5::mqttbytes::QoS::AtMostOnce,
+        QosLevel::Qos1 => rumqttc::v5::mqttbytes::QoS::AtLeastOnce,
+        QosLevel::Qos2 => rumqttc::v5::mqttbytes::QoS::ExactlyOnce,
+    }
+}
+
 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
 fn apply_bind_device(eventloop: &mut rumqttc::EventLoop, bind_device: Option<&str>) {
     if let Some(bind_device) = bind_device.filter(|value| !value.is_empty()) {
@@ -1442,34 +1739,111 @@ fn apply_bind_device(_eventloop: &mut rumqttc::EventLoop, _bind_device: Option<&
 fn config_from_broker_profile(profile: &BrokerProfile) -> BenchConfig {
     let mut config = BenchConfig::default();
     config.protocol = profile.protocol;
+    config.mqtt_version = profile.mqtt_version;
     config.host = profile.host.clone();
     config.port = profile.port;
     config.websocket_path = profile.websocket_path.clone();
     config.keepalive_secs = profile.keepalive_secs;
+    config.connection_timeout_secs = profile.connection_timeout_secs;
     config.clean_session = profile.clean_session;
+    config.tls = profile.tls.clone();
+    config.mqtt5 = profile.mqtt5.clone();
     if let Some(AuthConfig::UserPassword { username, password }) = &profile.auth {
         config.username = Some(username.clone());
         config.password = Some(password.clone());
     }
+    if let Some(AuthConfig::ClientCert { cert_pem, key_pem }) = &profile.auth {
+        let tls = config.tls.get_or_insert_with(Default::default);
+        tls.enabled = true;
+        tls.client_cert_pem = Some(cert_pem.clone());
+        tls.client_key_pem = Some(key_pem.clone());
+    }
     config.normalized()
 }
 
-fn mqtt_options_for_client(client_id: String, config: &BenchConfig) -> MqttOptions {
+fn mqtt_options_for_client(client_id: String, config: &BenchConfig) -> Result<MqttOptions> {
     let broker_addr = broker_address_for_config(config);
     let mut mqtt_options = MqttOptions::new(client_id, broker_addr, config.port);
     match config.protocol {
         BrokerProtocol::Mqtt => {}
         BrokerProtocol::Mqtts => {
-            mqtt_options.set_transport(Transport::tls_with_default_config());
+            mqtt_options.set_transport(Transport::tls_with_config(tls_configuration(config)?));
         }
         BrokerProtocol::Ws => {
             mqtt_options.set_transport(Transport::Ws);
         }
         BrokerProtocol::Wss => {
-            mqtt_options.set_transport(Transport::wss_with_default_config());
+            mqtt_options.set_transport(Transport::wss_with_config(tls_configuration(config)?));
         }
     }
-    mqtt_options
+    Ok(mqtt_options)
+}
+
+fn tls_configuration(config: &BenchConfig) -> Result<TlsConfiguration> {
+    use std::io::{BufReader, Cursor};
+
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let tls = config.tls.clone().unwrap_or_default();
+    let mut roots = RootCertStore::empty();
+    let native = rustls_native_certs::load_native_certs();
+    roots.add_parsable_certificates(native.certs);
+
+    if let Some(ca_pem) = tls
+        .ca_pem
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let certs = rustls_pemfile::certs(&mut BufReader::new(Cursor::new(ca_pem.as_bytes())))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("invalid CA certificate PEM")?;
+        if certs.is_empty() {
+            return Err(anyhow!("CA certificate PEM contains no certificates"));
+        }
+        roots.add_parsable_certificates(certs);
+    }
+
+    let builder = ClientConfig::builder().with_root_certificates(roots);
+    let mut rustls_config = match (
+        tls.client_cert_pem
+            .as_deref()
+            .filter(|value| !value.trim().is_empty()),
+        tls.client_key_pem
+            .as_deref()
+            .filter(|value| !value.trim().is_empty()),
+    ) {
+        (Some(cert_pem), Some(key_pem)) => {
+            let certs =
+                rustls_pemfile::certs(&mut BufReader::new(Cursor::new(cert_pem.as_bytes())))
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .context("invalid client certificate PEM")?;
+            let key =
+                rustls_pemfile::private_key(&mut BufReader::new(Cursor::new(key_pem.as_bytes())))
+                    .context("invalid client private key PEM")?
+                    .ok_or_else(|| anyhow!("client private key PEM contains no private key"))?;
+            builder
+                .with_client_auth_cert(certs, key)
+                .context("client certificate and private key do not match")?
+        }
+        (None, None) => builder.with_no_client_auth(),
+        _ => {
+            return Err(anyhow!(
+                "both client certificate and private key are required for mTLS"
+            ));
+        }
+    };
+
+    rustls_config.alpn_protocols = tls
+        .alpn_protocols
+        .iter()
+        .map(|value| value.as_bytes().to_vec())
+        .collect();
+    if tls.insecure_skip_verify {
+        rustls_config
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoCertificateVerification));
+    }
+    Ok(TlsConfiguration::Rustls(Arc::new(rustls_config)))
 }
 
 fn broker_address_for_config(config: &BenchConfig) -> String {
@@ -1653,6 +2027,49 @@ mod tests {
             Some(1_775_000_000_000_000_000)
         );
         assert!(payload.len() > 4);
+    }
+
+    #[test]
+    fn mqtt5_options_apply_connect_properties() {
+        let config = BenchConfig {
+            mqtt_version: MqttVersion::V5_0,
+            connection_timeout_secs: 12,
+            clean_session: false,
+            mqtt5: Some(crate::model::Mqtt5Config {
+                session_expiry_interval_secs: Some(3600),
+                receive_maximum: Some(100),
+                maximum_packet_size: Some(1_048_576),
+                topic_alias_maximum: Some(16),
+                request_problem_information: true,
+            }),
+            ..BenchConfig::default()
+        };
+
+        let options = mqtt5_options_for_client("mqtt5-test".to_string(), &config, None).unwrap();
+        assert_eq!(options.connection_timeout(), 12);
+        assert_eq!(options.session_expiry_interval(), Some(3600));
+        assert_eq!(options.receive_maximum(), Some(100));
+        assert_eq!(options.max_packet_size(), Some(1_048_576));
+        assert_eq!(options.topic_alias_max(), Some(16));
+        assert_eq!(options.request_problem_info(), Some(1));
+    }
+
+    #[test]
+    fn tls_configuration_accepts_system_roots_and_debug_verifier() {
+        let config = BenchConfig {
+            protocol: BrokerProtocol::Mqtts,
+            tls: Some(crate::model::TlsConfig {
+                enabled: true,
+                insecure_skip_verify: true,
+                alpn_protocols: vec!["mqtt".to_string()],
+                ..Default::default()
+            }),
+            ..BenchConfig::default()
+        };
+        assert!(matches!(
+            tls_configuration(&config),
+            Ok(TlsConfiguration::Rustls(_))
+        ));
     }
 
     #[test]

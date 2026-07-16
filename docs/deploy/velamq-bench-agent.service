@@ -1,0 +1,24 @@
+[Unit]
+Description=VelaMQ Bench distributed load agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=velamq-bench
+Group=velamq-bench
+WorkingDirectory=/opt/velamq-bench-agent
+EnvironmentFile=/etc/velamq-bench/agent.env
+Environment=VELAMQ_BENCH_AGENT_DATA_DIR=/var/lib/velamq-bench-agent
+ExecStart=/opt/velamq-bench-agent/velamq-bench-agent
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/velamq-bench-agent
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

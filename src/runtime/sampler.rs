@@ -9,7 +9,7 @@ use std::{
 use chrono::Utc;
 use tokio::time::Instant;
 
-use crate::model::MetricSnapshot;
+use crate::model::{LatencyBucket, MetricSnapshot};
 
 #[derive(Debug)]
 pub struct WorkloadSampler {
@@ -172,6 +172,9 @@ impl WorkloadSampler {
             connect_rate,
             error_rate,
             latency_count: latency.total_count,
+            latency_window_count: latency.window_count,
+            latency_window_sum_us: latency.window_sum_us,
+            latency_histogram: latency_histogram(&latency_values),
             latency_avg_ms,
             latency_min_ms: latency.window_min_us as f64 / 1000.0,
             latency_p50_ms: percentile_ms(&latency_values, 0.50),
@@ -203,6 +206,21 @@ impl WorkloadSampler {
         window.window_max_us = 0;
         sample
     }
+}
+
+fn latency_histogram(values_us: &[u64]) -> Vec<LatencyBucket> {
+    let mut buckets = std::collections::BTreeMap::<u64, u64>::new();
+    for value in values_us {
+        let upper_bound = value.max(&1).next_power_of_two();
+        *buckets.entry(upper_bound).or_default() += 1;
+    }
+    buckets
+        .into_iter()
+        .map(|(upper_bound_us, count)| LatencyBucket {
+            upper_bound_us,
+            count,
+        })
+        .collect()
 }
 
 fn percentile_ms(sorted_values_us: &[u64], quantile: f64) -> f64 {

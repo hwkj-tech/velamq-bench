@@ -1,8 +1,11 @@
 import type {
   Annotation,
   BenchTemplate,
+  AgentNode,
   BrokerConnectionTest,
   BrokerProfile,
+  DistributedMetrics,
+  DistributedRun,
   MetricSnapshot,
   PayloadProfile,
   Run,
@@ -106,6 +109,18 @@ export interface BundleImportCounts {
 }
 
 export const api = {
+  agents: () => apiGet<AgentNode[]>('/api/v2/agents'),
+  updateAgent: (id: string, update: Partial<Pick<AgentNode, 'name' | 'labels' | 'enabled' | 'draining'>>) =>
+    apiPatch<AgentNode>(`/api/v2/agents/${id}`, update),
+  deleteAgent: (id: string) => request<void>(`/api/v2/agents/${id}`, { method: 'DELETE' }),
+  distributedRuns: () => apiGet<DistributedRun[]>('/api/v2/distributed-runs'),
+  distributedRun: (id: string) => apiGet<DistributedRun>(`/api/v2/distributed-runs/${id}`),
+  startDistributedRun: (request: { scenario_id: string; node_ids: string[]; required_labels: string[]; strategy: string }) =>
+    apiPost<DistributedRun>('/api/v2/distributed-runs', request),
+  stopDistributedRun: (id: string) => apiPost<DistributedRun>(`/api/v2/distributed-runs/${id}/stop`),
+  distributedMetrics: (id: string) => apiGet<DistributedMetrics>(`/api/v2/distributed-runs/${id}/metrics`),
+  exportDistributedRunCsv: (id: string) =>
+    requestBlob(`/api/v2/distributed-runs/${id}/report.csv`, { cache: 'no-store' }, 'text/csv'),
   runtime: () => apiGet<RuntimeSummary>('/api/v2/runtime/state'),
   templates: (limit = 80) => apiGet<BenchTemplate[]>(`/api/v2/templates?limit=${limit}`),
   runs: (limit = 50) => apiGet<Run[]>(`/api/v2/runs?limit=${limit}`),

@@ -1,9 +1,3 @@
-mod bench;
-mod export;
-mod model;
-mod runtime;
-mod storage;
-
 use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
@@ -16,7 +10,7 @@ use std::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, Query, Request, State},
+    extract::{FromRef, Path, Query, Request, State},
     http::{
         HeaderMap, HeaderName, HeaderValue, StatusCode,
         header::{CONTENT_DISPOSITION, CONTENT_TYPE},
@@ -38,20 +32,42 @@ use tracing::info;
 use uuid::Uuid;
 use zip::{CompressionMethod, ZipArchive, ZipWriter, write::FileOptions};
 
-use crate::{
+use velamq_bench::{
     bench::BenchManager,
+    cluster::{AGENT_PROTOCOL_VERSION, ClusterManager},
     export::{report_to_pdf, report_to_svg},
     model::{
-        Annotation, ApiError, BenchEvent, BenchReport, BrokerProfile, PayloadProfile, Scenario,
-        ScenarioStage, SpecimenUpdate, StartBenchRequest, TemplateDraft, Workload,
-        normalize_websocket_path,
+        AgentHeartbeat, AgentLogBatch, AgentMetricBatch, AgentNodeUpdate, AgentRegistration,
+        AgentTaskAck, AgentTaskComplete, AgentTaskControl, AgentTaskCreate, Annotation, ApiError,
+        BenchEvent, BenchReport, BrokerProfile, DistributedMetrics, DistributedRunCreate,
+        MetricSnapshot, PayloadProfile, Scenario, ScenarioStage, SpecimenUpdate, StartBenchRequest,
+        TemplateDraft, Workload, normalize_websocket_path,
     },
     runtime::sse::RunEvent,
     storage::Storage,
 };
 
+#[derive(Clone)]
+struct AppState {
+    manager: Arc<BenchManager>,
+    cluster: Arc<ClusterManager>,
+}
+
+impl FromRef<AppState> for Arc<BenchManager> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::clone(&state.manager)
+    }
+}
+
+impl FromRef<AppState> for Arc<ClusterManager> {
+    fn from_ref(state: &AppState) -> Self {
+        Arc::clone(&state.cluster)
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    velamq_bench::install_crypto_provider();
     tracing_subscriber::fmt::init();
 
     let runtime_root = runtime_root();
@@ -60,7 +76,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| runtime_root.join("data"))
         .join("velamq-bench.sqlite3");
     let storage = Storage::new(data_path).await?;
-    let manager = BenchManager::new(storage);
+    let manager = BenchManager::new(storage.clone());
+    let cluster = ClusterManager::new(storage);
+    let app_state = AppState { manager, cluster };
 
     let packaged_web_root = runtime_root.join("web");
     let web_root = std::env::var_os("VELAMQ_WEB_ROOT")
@@ -119,6 +137,56 @@ async fn main() -> anyhow::Result<()> {
             "/api/v2/broker-profiles/{id}/test-connection",
             post(v2_broker_test_connection),
         )
+        .route("/api/v2/agents", get(v2_agents))
+        .route("/api/v2/agents/register", post(v2_agent_register))
+        .route(
+            "/api/v2/agents/{id}",
+            get(v2_agent_get)
+                .patch(v2_agent_update)
+                .delete(v2_agent_delete),
+        )
+        .route("/api/v2/agents/{id}/heartbeat", post(v2_agent_heartbeat))
+        .route("/api/v2/agents/{id}/tasks/next", get(v2_agent_next_task))
+        .route(
+            "/api/v2/agent-tasks",
+            get(v2_agent_tasks).post(v2_agent_task_create),
+        )
+        .route("/api/v2/agent-tasks/{id}", get(v2_agent_task_get))
+        .route("/api/v2/agent-tasks/{id}/ack", post(v2_agent_task_ack))
+        .route(
+            "/api/v2/agent-tasks/{id}/metrics",
+            post(v2_agent_task_metrics),
+        )
+        .route(
+            "/api/v2/agent-tasks/{id}/logs",
+            get(v2_agent_task_logs).post(v2_agent_task_log_upload),
+        )
+        .route(
+            "/api/v2/agent-tasks/{id}/complete",
+            post(v2_agent_task_complete),
+        )
+        .route(
+            "/api/v2/agent-tasks/{id}/control",
+            get(v2_agent_task_control),
+        )
+        .route("/api/v2/agent-tasks/{id}/stop", post(v2_agent_task_stop))
+        .route(
+            "/api/v2/distributed-runs",
+            get(v2_distributed_runs).post(v2_distributed_run_create),
+        )
+        .route("/api/v2/distributed-runs/{id}", get(v2_distributed_run_get))
+        .route(
+            "/api/v2/distributed-runs/{id}/stop",
+            post(v2_distributed_run_stop),
+        )
+        .route(
+            "/api/v2/distributed-runs/{id}/metrics",
+            get(v2_distributed_run_metrics),
+        )
+        .route(
+            "/api/v2/distributed-runs/{id}/report.csv",
+            get(v2_distributed_run_report_csv),
+        )
         .route(
             "/api/v2/payload-profiles",
             get(v2_payloads).post(v2_payload_create),
@@ -167,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v2/bundles/import", post(v2_bundle_import))
         .route("/api/{*path}", any(api_not_found))
         .fallback_service(static_files)
-        .with_state(manager);
+        .with_state(app_state);
 
     let bind = std::env::var("VELAMQ_BIND").unwrap_or_else(|_| "127.0.0.1:8088".to_string());
     let addr: SocketAddr = bind.parse()?;
@@ -509,11 +577,474 @@ async fn v2_brokers(State(manager): State<Arc<BenchManager>>) -> impl IntoRespon
     }
 }
 
+async fn v2_agents(State(cluster): State<Arc<ClusterManager>>) -> impl IntoResponse {
+    match cluster.nodes().await {
+        Ok(nodes) => (StatusCode::OK, Json(nodes)).into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to list agent nodes: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_get(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.node(&id).await {
+        Ok(Some(node)) => (StatusCode::OK, Json(node)).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent node not found".to_string()),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load agent node: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_register(
+    State(cluster): State<Arc<ClusterManager>>,
+    headers: HeaderMap,
+    Json(registration): Json<AgentRegistration>,
+) -> impl IntoResponse {
+    if !cluster.registration_enabled() {
+        return api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent registration is disabled; configure VELAMQ_BENCH_AGENT_BOOTSTRAP_TOKEN"
+                .to_string(),
+        );
+    }
+    let Some(token) = bearer_token(&headers) else {
+        return api_error(StatusCode::UNAUTHORIZED, "missing bearer token".to_string());
+    };
+    match cluster.register(token, registration).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(err) if err.to_string().contains("bootstrap token") => {
+            api_error(StatusCode::UNAUTHORIZED, err.to_string())
+        }
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_agent_heartbeat(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(heartbeat): Json<AgentHeartbeat>,
+) -> impl IntoResponse {
+    if !agent_protocol_supported(&headers) {
+        return api_error(
+            StatusCode::UPGRADE_REQUIRED,
+            format!("unsupported agent protocol; expected {AGENT_PROTOCOL_VERSION}"),
+        );
+    }
+    let Some(token) = bearer_token(&headers) else {
+        return api_error(StatusCode::UNAUTHORIZED, "missing agent token".to_string());
+    };
+    if let Err(err) = cluster.authenticate(&id, token).await {
+        return api_error(StatusCode::UNAUTHORIZED, err.to_string());
+    }
+    match cluster.heartbeat(&id, heartbeat).await {
+        Ok(Some(node)) => (StatusCode::OK, Json(node)).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent node not found".to_string()),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to record agent heartbeat: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_update(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+    Json(update): Json<AgentNodeUpdate>,
+) -> impl IntoResponse {
+    match cluster.update_node(&id, update).await {
+        Ok(Some(node)) => (StatusCode::OK, Json(node)).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent node not found".to_string()),
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_agent_delete(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.delete_node(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => api_error(StatusCode::NOT_FOUND, "agent node not found".to_string()),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to delete agent node: {err:#}"),
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentTaskQuery {
+    node_id: Option<String>,
+}
+
+async fn v2_agent_tasks(
+    State(cluster): State<Arc<ClusterManager>>,
+    Query(query): Query<AgentTaskQuery>,
+) -> impl IntoResponse {
+    match cluster.tasks(query.node_id).await {
+        Ok(tasks) => (StatusCode::OK, Json(tasks)).into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to list agent tasks: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_task_create(
+    State(cluster): State<Arc<ClusterManager>>,
+    Json(request): Json<AgentTaskCreate>,
+) -> impl IntoResponse {
+    match cluster.create_task(request).await {
+        Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_agent_task_get(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.task(&id).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(task)).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent task not found".to_string()),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load agent task: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_next_task(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(node_id): Path<String>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(response) = authenticate_agent_headers(&cluster, &node_id, &headers).await {
+        return response;
+    }
+    match cluster.lease_next_task(&node_id).await {
+        Ok(Some(lease)) => (StatusCode::OK, Json(lease)).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to lease agent task: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_task_ack(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+    headers: HeaderMap,
+    Json(ack): Json<AgentTaskAck>,
+) -> impl IntoResponse {
+    let Some(node_id) = agent_node_id(&headers) else {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent node id".to_string(),
+        );
+    };
+    if let Err(response) = authenticate_agent_headers(&cluster, node_id, &headers).await {
+        return response;
+    }
+    match cluster.ack_task(&task_id, node_id, &ack.lease_id).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(task)).into_response(),
+        Ok(None) => api_error(
+            StatusCode::CONFLICT,
+            "agent task lease is invalid or expired".to_string(),
+        ),
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_agent_task_complete(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+    headers: HeaderMap,
+    Json(complete): Json<AgentTaskComplete>,
+) -> impl IntoResponse {
+    let Some(node_id) = agent_node_id(&headers) else {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent node id".to_string(),
+        );
+    };
+    if let Err(response) = authenticate_agent_headers(&cluster, node_id, &headers).await {
+        return response;
+    }
+    match cluster.complete_task(&task_id, node_id, complete).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(task)).into_response(),
+        Ok(None) => api_error(
+            StatusCode::CONFLICT,
+            "agent task is not running or its lease expired".to_string(),
+        ),
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_agent_task_metrics(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+    headers: HeaderMap,
+    Json(batch): Json<AgentMetricBatch>,
+) -> impl IntoResponse {
+    let Some(node_id) = agent_node_id(&headers) else {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent node id".to_string(),
+        );
+    };
+    if let Err(response) = authenticate_agent_headers(&cluster, node_id, &headers).await {
+        return response;
+    }
+    match cluster.upload_metrics(&task_id, node_id, batch).await {
+        Ok(inserted) => {
+            (StatusCode::ACCEPTED, Json(json!({ "inserted": inserted }))).into_response()
+        }
+        Err(err) => api_error(StatusCode::CONFLICT, err.to_string()),
+    }
+}
+
+async fn v2_agent_task_log_upload(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+    headers: HeaderMap,
+    Json(batch): Json<AgentLogBatch>,
+) -> impl IntoResponse {
+    let Some(node_id) = agent_node_id(&headers) else {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent node id".to_string(),
+        );
+    };
+    if let Err(response) = authenticate_agent_headers(&cluster, node_id, &headers).await {
+        return response;
+    }
+    match cluster.upload_logs(&task_id, node_id, batch).await {
+        Ok(inserted) => {
+            (StatusCode::ACCEPTED, Json(json!({ "inserted": inserted }))).into_response()
+        }
+        Err(err) => api_error(StatusCode::CONFLICT, err.to_string()),
+    }
+}
+
+async fn v2_agent_task_logs(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.task_logs(&task_id).await {
+        Ok(logs) => (StatusCode::OK, Json(logs)).into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load agent task logs: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_task_control(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let Some(node_id) = agent_node_id(&headers) else {
+        return api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent node id".to_string(),
+        );
+    };
+    if let Err(response) = authenticate_agent_headers(&cluster, node_id, &headers).await {
+        return response;
+    }
+    match cluster.task(&task_id).await {
+        Ok(Some(task)) if task.node_id == node_id => (
+            StatusCode::OK,
+            Json(AgentTaskControl {
+                stop_requested: task.stop_requested,
+            }),
+        )
+            .into_response(),
+        Ok(Some(_)) => api_error(
+            StatusCode::FORBIDDEN,
+            "task belongs to another node".to_string(),
+        ),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent task not found".to_string()),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load agent task control: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_agent_task_stop(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(task_id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.stop_task(&task_id).await {
+        Ok(Some(task)) => (StatusCode::OK, Json(task)).into_response(),
+        Ok(None) => api_error(
+            StatusCode::CONFLICT,
+            "agent task is not active or was not found".to_string(),
+        ),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop agent task: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_distributed_runs(State(cluster): State<Arc<ClusterManager>>) -> impl IntoResponse {
+    match cluster.distributed_runs().await {
+        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to list distributed runs: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_distributed_run_create(
+    State(cluster): State<Arc<ClusterManager>>,
+    Json(request): Json<DistributedRunCreate>,
+) -> impl IntoResponse {
+    match cluster.start_distributed_run(request).await {
+        Ok(run) => (StatusCode::CREATED, Json(run)).into_response(),
+        Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+    }
+}
+
+async fn v2_distributed_run_get(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.distributed_run(&id).await {
+        Ok(Some(run)) => (StatusCode::OK, Json(run)).into_response(),
+        Ok(None) => api_error(
+            StatusCode::NOT_FOUND,
+            "distributed run not found".to_string(),
+        ),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load distributed run: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_distributed_run_stop(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.stop_distributed_run(&id).await {
+        Ok(Some(run)) => (StatusCode::OK, Json(run)).into_response(),
+        Ok(None) => api_error(
+            StatusCode::NOT_FOUND,
+            "distributed run not found".to_string(),
+        ),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to stop distributed run: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_distributed_run_metrics(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.distributed_metrics(&id).await {
+        Ok(metrics) => (StatusCode::OK, Json(metrics)).into_response(),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to aggregate distributed metrics: {err:#}"),
+        ),
+    }
+}
+
+async fn v2_distributed_run_report_csv(
+    State(cluster): State<Arc<ClusterManager>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match cluster.distributed_run(&id).await {
+        Ok(Some(run)) => match cluster.distributed_metrics(&id).await {
+            Ok(metrics) => download_response(
+                "text/csv; charset=utf-8",
+                &format!("velamq-bench-distributed-{}.csv", run.id),
+                distributed_metrics_to_csv(&metrics),
+            ),
+            Err(err) => api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to aggregate distributed metrics: {err:#}"),
+            ),
+        },
+        Ok(None) => api_error(
+            StatusCode::NOT_FOUND,
+            "distributed run not found".to_string(),
+        ),
+        Err(err) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to load distributed run: {err:#}"),
+        ),
+    }
+}
+
+async fn authenticate_agent_headers(
+    cluster: &ClusterManager,
+    node_id: &str,
+    headers: &HeaderMap,
+) -> Result<(), Response> {
+    if !agent_protocol_supported(headers) {
+        return Err(api_error(
+            StatusCode::UPGRADE_REQUIRED,
+            format!("unsupported agent protocol; expected {AGENT_PROTOCOL_VERSION}"),
+        ));
+    }
+    let Some(token) = bearer_token(headers) else {
+        return Err(api_error(
+            StatusCode::UNAUTHORIZED,
+            "missing agent token".to_string(),
+        ));
+    };
+    cluster
+        .authenticate(node_id, token)
+        .await
+        .map_err(|err| api_error(StatusCode::UNAUTHORIZED, err.to_string()))
+}
+
+fn agent_node_id(headers: &HeaderMap) -> Option<&str> {
+    headers.get("x-velamq-agent-id")?.to_str().ok()
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("authorization")?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|token| !token.is_empty())
+}
+
+fn agent_protocol_supported(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-velamq-protocol-version")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u16>().ok())
+        == Some(AGENT_PROTOCOL_VERSION)
+}
+
 async fn v2_broker_create(
     State(manager): State<Arc<BenchManager>>,
     Json(mut profile): Json<BrokerProfile>,
 ) -> impl IntoResponse {
     normalize_broker_profile(&mut profile, None);
+    if let Err(err) = profile.validate() {
+        return api_error(StatusCode::BAD_REQUEST, err);
+    }
     match manager.upsert_broker_profile(profile).await {
         Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
         Err(err) => api_error(
@@ -546,6 +1077,9 @@ async fn v2_broker_update(
     Json(mut profile): Json<BrokerProfile>,
 ) -> impl IntoResponse {
     normalize_broker_profile(&mut profile, Some(id));
+    if let Err(err) = profile.validate() {
+        return api_error(StatusCode::BAD_REQUEST, err);
+    }
     match manager.upsert_broker_profile(profile).await {
         Ok(profile) => (StatusCode::OK, Json(profile)).into_response(),
         Err(err) => api_error(
@@ -1103,8 +1637,8 @@ struct BundleExport {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct BundleRun {
-    run: crate::model::Run,
-    snapshots: Vec<crate::model::MetricSnapshot>,
+    run: velamq_bench::model::Run,
+    snapshots: Vec<velamq_bench::model::MetricSnapshot>,
     annotations: Vec<Annotation>,
 }
 
@@ -1519,7 +2053,7 @@ async fn import_bundle_request(
 }
 
 fn collect_profile_ids_from_run(
-    run: &crate::model::Run,
+    run: &velamq_bench::model::Run,
     broker_ids: &mut HashSet<String>,
     payload_ids: &mut HashSet<String>,
 ) {
@@ -1657,7 +2191,7 @@ fn remap_workload(workload: &mut Workload, id_map: &BundleIdMap) {
     }
 }
 
-fn remap_snapshot(snapshot: &mut crate::model::MetricSnapshot, id_map: &BundleIdMap) {
+fn remap_snapshot(snapshot: &mut velamq_bench::model::MetricSnapshot, id_map: &BundleIdMap) {
     if let Some(run_id) = id_map.runs.get(&snapshot.run_id) {
         snapshot.run_id = run_id.clone();
     }
@@ -1748,6 +2282,18 @@ fn normalize_broker_profile(profile: &mut BrokerProfile, id: Option<String>) {
     }
     if profile.keepalive_secs == 0 {
         profile.keepalive_secs = 30;
+    }
+    if profile.connection_timeout_secs == 0 {
+        profile.connection_timeout_secs = 10;
+    }
+    if profile.mqtt_version == velamq_bench::model::MqttVersion::V5_0 && profile.mqtt5.is_none() {
+        profile.mqtt5 = Some(velamq_bench::model::Mqtt5Config::default());
+    }
+    if !matches!(
+        profile.protocol,
+        velamq_bench::model::BrokerProtocol::Mqtts | velamq_bench::model::BrokerProtocol::Wss
+    ) {
+        profile.tls = None;
     }
     let now = Utc::now();
     if profile.created_at.timestamp() == 0 {
@@ -2013,6 +2559,56 @@ fn report_to_csv(report: &BenchReport) -> String {
     }
 
     csv
+}
+
+fn distributed_metrics_to_csv(metrics: &DistributedMetrics) -> String {
+    let mut csv = String::from(
+        "series,node_id,task_id,run_id,ts,elapsed_ms,connected,published,received,errors,publish_rate,receive_rate,connect_rate,error_rate,latency_count,latency_avg_ms,latency_min_ms,latency_p50_ms,latency_p90_ms,latency_p95_ms,latency_p99_ms,latency_p999_ms,latency_max_ms\n",
+    );
+    for snapshot in &metrics.summary {
+        push_distributed_snapshot_row(&mut csv, "global", "", "", snapshot);
+    }
+    for node in &metrics.nodes {
+        for snapshot in &node.snapshots {
+            push_distributed_snapshot_row(&mut csv, "node", &node.node_id, &node.task_id, snapshot);
+        }
+    }
+    csv
+}
+
+fn push_distributed_snapshot_row(
+    csv: &mut String,
+    series: &str,
+    node_id: &str,
+    task_id: &str,
+    snapshot: &MetricSnapshot,
+) {
+    csv.push_str(&format!(
+        "{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}\n",
+        csv_escape(series),
+        csv_escape(node_id),
+        csv_escape(task_id),
+        csv_escape(&snapshot.run_id),
+        csv_escape(&snapshot.ts.to_rfc3339()),
+        snapshot.elapsed_ms,
+        snapshot.connected,
+        snapshot.published,
+        snapshot.received,
+        snapshot.errors,
+        snapshot.publish_rate,
+        snapshot.receive_rate,
+        snapshot.connect_rate,
+        snapshot.error_rate,
+        snapshot.latency_count,
+        snapshot.latency_avg_ms,
+        snapshot.latency_min_ms,
+        snapshot.latency_p50_ms,
+        snapshot.latency_p90_ms,
+        snapshot.latency_p95_ms,
+        snapshot.latency_p99_ms,
+        snapshot.latency_p999_ms,
+        snapshot.latency_max_ms,
+    ));
 }
 
 fn push_summary_row(csv: &mut String, run_id: &str, metric: &str, value: impl ToString) {

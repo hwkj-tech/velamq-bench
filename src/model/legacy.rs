@@ -62,6 +62,7 @@ impl Default for NetworkBindMode {
 pub struct BenchConfig {
     pub mode: BenchMode,
     pub protocol: super::BrokerProtocol,
+    pub mqtt_version: super::MqttVersion,
     pub host: String,
     pub port: u16,
     pub websocket_path: Option<String>,
@@ -71,8 +72,11 @@ pub struct BenchConfig {
     pub client_interval_ms: u64,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub tls: Option<super::TlsConfig>,
     pub keepalive_secs: u16,
+    pub connection_timeout_secs: u16,
     pub clean_session: bool,
+    pub mqtt5: Option<super::Mqtt5Config>,
     pub client_id_template: String,
     pub topic: String,
     pub qos: QosLevel,
@@ -152,6 +156,7 @@ impl Default for BenchConfig {
         Self {
             mode: BenchMode::Pub,
             protocol: super::BrokerProtocol::Mqtt,
+            mqtt_version: super::MqttVersion::V3_1_1,
             host: "127.0.0.1".to_string(),
             port: 1883,
             websocket_path: None,
@@ -161,8 +166,11 @@ impl Default for BenchConfig {
             client_interval_ms: 0,
             username: None,
             password: None,
+            tls: None,
             keepalive_secs: 30,
+            connection_timeout_secs: 10,
             clean_session: true,
+            mqtt5: None,
             client_id_template: "velamq-{mode}-{i}".to_string(),
             topic: "velamq/bench/{i}".to_string(),
             qos: QosLevel::Qos0,
@@ -196,6 +204,9 @@ impl BenchConfig {
         }
         if self.keepalive_secs == 0 {
             self.keepalive_secs = 30;
+        }
+        if self.connection_timeout_secs == 0 {
+            self.connection_timeout_secs = 10;
         }
         if self.client_id_template.trim().is_empty() {
             self.client_id_template = "velamq-{mode}-{i}".to_string();
@@ -403,6 +414,12 @@ pub struct MetricSnapshot {
     pub connect_rate: f64,
     pub error_rate: f64,
     pub latency_count: u64,
+    #[serde(default)]
+    pub latency_window_count: u64,
+    #[serde(default)]
+    pub latency_window_sum_us: u64,
+    #[serde(default)]
+    pub latency_histogram: Vec<LatencyBucket>,
     pub latency_avg_ms: f64,
     pub latency_min_ms: f64,
     pub latency_p50_ms: f64,
@@ -411,6 +428,12 @@ pub struct MetricSnapshot {
     pub latency_p99_ms: f64,
     pub latency_p999_ms: f64,
     pub latency_max_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LatencyBucket {
+    pub upper_bound_us: u64,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

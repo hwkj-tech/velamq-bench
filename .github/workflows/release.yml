@@ -46,10 +46,21 @@ jobs:
           fi
 
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Match tag to Cargo version
+        shell: bash
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "velamq-bench") | .version')"
+          if [[ "v${cargo_version}" != "${RELEASE_TAG}" ]]; then
+            echo "Release tag ${RELEASE_TAG} does not match Cargo.toml version v${cargo_version}" >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -67,16 +78,27 @@ jobs:
       - name: Build musl binaries
         run: cross build --locked --release --target "${{ matrix.target }}" --bins
 
-      - name: Package release archive
+      - name: Package service and agent archives
         shell: bash
         run: |
-          package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
-          mkdir -p "dist/${package}/web"
-          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${package}/"
-          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${package}/"
-          cp -R web/dist "dist/${package}/web/dist"
-          cp README.md CHANGELOG.md "dist/${package}/"
-          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          service_package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
+          agent_package="velamq-bench-agent-${RELEASE_TAG}-${{ matrix.label }}"
+
+          mkdir -p "dist/${service_package}/web" "dist/${service_package}/docs/deploy" "dist/${agent_package}/docs/deploy"
+          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${service_package}/"
+          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${service_package}/"
+          cp -R web/dist "dist/${service_package}/web/dist"
+          cp README.md CHANGELOG.md "dist/${service_package}/"
+          cp docs/api.md docs/distributed-benchmark-plan.md docs/bench-agent-deployment.md "dist/${service_package}/docs/"
+          cp docs/deploy/velamq-bench-agent.service "dist/${service_package}/docs/deploy/"
+
+          cp "target/${{ matrix.target }}/release/velamq-bench-agent" "dist/${agent_package}/"
+          cp README.md CHANGELOG.md "dist/${agent_package}/"
+          cp docs/api.md docs/distributed-benchmark-plan.md docs/bench-agent-deployment.md "dist/${agent_package}/docs/"
+          cp docs/deploy/velamq-bench-agent.service "dist/${agent_package}/docs/deploy/"
+
+          tar -C dist -czf "dist/${service_package}.tar.gz" "${service_package}"
+          tar -C dist -czf "dist/${agent_package}.tar.gz" "${agent_package}"
 
       - name: Upload release archive
         uses: actions/upload-artifact@v7
@@ -111,10 +133,21 @@ jobs:
           fi
 
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Match tag to Cargo version
+        shell: bash
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "velamq-bench") | .version')"
+          if [[ "v${cargo_version}" != "${RELEASE_TAG}" ]]; then
+            echo "Release tag ${RELEASE_TAG} does not match Cargo.toml version v${cargo_version}" >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -132,16 +165,27 @@ jobs:
       - name: Build macOS binaries
         run: cargo build --locked --release --target "${{ matrix.target }}" --bins
 
-      - name: Package release archive
+      - name: Package service and agent archives
         shell: bash
         run: |
-          package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
-          mkdir -p "dist/${package}/web"
-          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${package}/"
-          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${package}/"
-          cp -R web/dist "dist/${package}/web/dist"
-          cp README.md CHANGELOG.md "dist/${package}/"
-          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          service_package="velamq-bench-${RELEASE_TAG}-${{ matrix.label }}"
+          agent_package="velamq-bench-agent-${RELEASE_TAG}-${{ matrix.label }}"
+
+          mkdir -p "dist/${service_package}/web" "dist/${service_package}/docs/deploy" "dist/${agent_package}/docs/deploy"
+          cp "target/${{ matrix.target }}/release/velamq-bench" "dist/${service_package}/"
+          cp "target/${{ matrix.target }}/release/velamq-connbench" "dist/${service_package}/"
+          cp -R web/dist "dist/${service_package}/web/dist"
+          cp README.md CHANGELOG.md "dist/${service_package}/"
+          cp docs/api.md docs/distributed-benchmark-plan.md docs/bench-agent-deployment.md "dist/${service_package}/docs/"
+          cp docs/deploy/velamq-bench-agent.service "dist/${service_package}/docs/deploy/"
+
+          cp "target/${{ matrix.target }}/release/velamq-bench-agent" "dist/${agent_package}/"
+          cp README.md CHANGELOG.md "dist/${agent_package}/"
+          cp docs/api.md docs/distributed-benchmark-plan.md docs/bench-agent-deployment.md "dist/${agent_package}/docs/"
+          cp docs/deploy/velamq-bench-agent.service "dist/${agent_package}/docs/deploy/"
+
+          tar -C dist -czf "dist/${service_package}.tar.gz" "${service_package}"
+          tar -C dist -czf "dist/${agent_package}.tar.gz" "${agent_package}"
 
       - name: Upload release archive
         uses: actions/upload-artifact@v7
@@ -165,10 +209,21 @@ jobs:
           }
 
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Match tag to Cargo version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $cargoVersion = ($metadata.packages | Where-Object { $_.name -eq 'velamq-bench' }).version
+          if ("v$cargoVersion" -ne $env:RELEASE_TAG) {
+            throw "Release tag $env:RELEASE_TAG does not match Cargo.toml version v$cargoVersion"
+          }
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -186,16 +241,28 @@ jobs:
       - name: Build Windows binaries
         run: cargo build --locked --release --target x86_64-pc-windows-msvc --bins
 
-      - name: Package release archive
+      - name: Package service and agent archives
         shell: pwsh
         run: |
-          $package = "velamq-bench-$env:RELEASE_TAG-windows-x86_64"
-          New-Item -ItemType Directory -Force -Path "dist/$package/web" | Out-Null
-          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-bench.exe" "dist/$package/"
-          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-connbench.exe" "dist/$package/"
-          Copy-Item -Recurse "web/dist" "dist/$package/web/dist"
-          Copy-Item README.md, CHANGELOG.md "dist/$package/"
-          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip"
+          $servicePackage = "velamq-bench-$env:RELEASE_TAG-windows-x86_64"
+          $agentPackage = "velamq-bench-agent-$env:RELEASE_TAG-windows-x86_64"
+
+          New-Item -ItemType Directory -Force -Path "dist/$servicePackage/web", "dist/$servicePackage/docs/deploy" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-bench.exe" "dist/$servicePackage/"
+          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-connbench.exe" "dist/$servicePackage/"
+          Copy-Item -Recurse "web/dist" "dist/$servicePackage/web/dist"
+          Copy-Item README.md, CHANGELOG.md "dist/$servicePackage/"
+          Copy-Item docs/api.md, docs/distributed-benchmark-plan.md, docs/bench-agent-deployment.md "dist/$servicePackage/docs/"
+          Copy-Item docs/deploy/velamq-bench-agent.service "dist/$servicePackage/docs/deploy/"
+
+          New-Item -ItemType Directory -Force -Path "dist/$agentPackage/docs/deploy" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/velamq-bench-agent.exe" "dist/$agentPackage/"
+          Copy-Item README.md, CHANGELOG.md "dist/$agentPackage/"
+          Copy-Item docs/api.md, docs/distributed-benchmark-plan.md, docs/bench-agent-deployment.md "dist/$agentPackage/docs/"
+          Copy-Item docs/deploy/velamq-bench-agent.service "dist/$agentPackage/docs/deploy/"
+
+          Compress-Archive -Path "dist/$servicePackage" -DestinationPath "dist/$servicePackage.zip"
+          Compress-Archive -Path "dist/$agentPackage" -DestinationPath "dist/$agentPackage.zip"
 
       - name: Upload release archive
         uses: actions/upload-artifact@v7
@@ -216,7 +283,7 @@ jobs:
 
     steps:
       - name: Download release archives
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
           pattern: release-*
           path: release-assets

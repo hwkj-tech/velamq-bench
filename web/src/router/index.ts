@@ -5,6 +5,7 @@ import Scenarios from '@/pages/Scenarios.vue';
 import ScenarioDetail from '@/pages/ScenarioDetail.vue';
 import ScenarioBuilder from '@/pages/ScenarioBuilder.vue';
 import Templates from '@/pages/Templates.vue';
+import Nodes from '@/pages/Nodes.vue';
 import SettingsLayout from '@/pages/settings/SettingsLayout.vue';
 import SettingsBrokers from '@/pages/settings/SettingsBrokers.vue';
 import SettingsPayloads from '@/pages/settings/SettingsPayloads.vue';
@@ -19,6 +20,7 @@ export const router = createRouter({
     { path: '/dashboard', component: Dashboard },
     { path: '/runs', component: Runs },
     { path: '/runs/:id/:tab?', component: () => import('@/pages/RunDetail.vue'), props: true },
+    { path: '/distributed-runs/:id', component: () => import('@/pages/DistributedRunDetail.vue'), props: true },
     { path: '/compare', redirect: (to) => ({ path: '/runs', query: to.query }) },
     { path: '/scenarios', component: Scenarios },
     { path: '/scenarios/new', component: ScenarioBuilder },
@@ -26,6 +28,7 @@ export const router = createRouter({
     { path: '/scenarios/:id/edit', component: ScenarioBuilder, props: true },
     { path: '/scenarios/:id/run', component: ScenarioBuilder, props: true },
     { path: '/templates', component: Templates },
+    { path: '/nodes', component: Nodes },
     {
       path: '/settings',
       component: SettingsLayout,

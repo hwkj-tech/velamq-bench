@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Added MQTT 3.1.1 and MQTT 5 broker profiles over TCP, TLS, WebSocket, and secure WebSocket, including mTLS and MQTT 5 connection properties.
+- Added the `velamq-bench-agent` remote executor, authenticated node registration, heartbeat, leases, task control, telemetry, and logs.
+- Added multi-node distributed scheduling with selected, even, and capacity-weighted client allocation.
+- Added global/per-node distributed charts, mergeable latency histograms, and distributed CSV export.
+- Added Nodes and Distributed Run UI, deployment documentation, and cross-platform Agent release packaging.
+- Split every platform Release into a `velamq-bench` service package and a separate `velamq-bench-agent` package.
+
 ## 0.2.0
 
 - Added v2 domain models for profiles, scenarios, workloads, runs, snapshots, and annotations.

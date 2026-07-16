@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import {
   PhCheckCircle,
+  PhCloud,
   PhGauge,
   PhGearSix,
   PhMoon,
@@ -51,6 +52,7 @@ const navItems = computed(() => [
   { to: '/runs', label: t('nav.runs'), icon: PhPulse },
   { to: '/scenarios', label: t('nav.scenarios'), icon: PhStack },
   { to: '/templates', label: t('nav.templates'), icon: PhTable },
+  { to: '/nodes', label: t('nav.nodes'), icon: PhCloud },
   { to: '/settings/brokers', label: t('nav.settings'), icon: PhGearSix },
 ]);
 

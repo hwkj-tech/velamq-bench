@@ -1,6 +1,6 @@
 [package]
 name = "velamq-bench"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 default-run = "velamq-bench"
 
@@ -11,9 +11,15 @@ chrono = { version = "0.4.44", features = ["serde"] }
 futures-util = "0.3.32"
 get_if_addrs = "0.5.3"
 rumqttc = { version = "0.25.1", features = ["websocket"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+rustls = "0.23.41"
+rustls-native-certs = "0.8.4"
+rustls-pemfile = "2.2.0"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.10.9"
+subtle = "2.6.1"
 svg2pdf = "0.13.0"
 tokio = { version = "1.52.1", features = ["full"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
@@ -22,3 +28,7 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 zip = "0.6"
+
+[[bin]]
+name = "velamq-bench-agent"
+path = "src/bin/velamq-bench-agent.rs"
