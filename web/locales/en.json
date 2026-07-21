@@ -10,7 +10,9 @@
     "scenarios": "Scenarios",
     "templates": "Templates",
     "nodes": "Nodes",
-    "settings": "Settings"
+    "settings": "Settings",
+    "workspace": "Benchmark workspace",
+    "workspaceHint": "Configure, run, and analyze"
   },
   "common": {
     "refresh": "Refresh",
@@ -75,6 +77,9 @@
   "a11y": {
     "primaryNavigation": "Primary navigation",
     "language": "Language",
+    "skipToContent": "Skip to main content",
+    "openNavigation": "Open navigation",
+    "closeNavigation": "Close navigation",
     "removeWorkload": "Remove workload",
     "removeStep": "Remove step"
   },
@@ -108,9 +113,42 @@
     "start": "Start run",
     "starting": "Starting..."
   },
+  "command": {
+    "title": "Quick actions",
+    "placeholder": "Search or jump",
+    "searchPlaceholder": "Type a page or action…",
+    "open": "Quick actions",
+    "navigate": "Go to page",
+    "action": "Run action",
+    "empty": "No matching pages or actions"
+  },
   "dashboard": {
     "title": "Dashboard",
     "subtitle": "Live runtime state, recent runs, and regression space.",
+    "controlCenter": "Control center",
+    "heroBody": "Track execution state, live telemetry, and recent outcomes in one view, then start the next MQTT benchmark without losing context.",
+    "createScenario": "Create scenario",
+    "liveTelemetry": "Live telemetry",
+    "streaming": "Streaming",
+    "standby": "Standing by",
+    "openActiveRun": "Open active run",
+    "noActiveHint": "Start a quick benchmark or run a saved scenario to see live metrics here.",
+    "activeHint": "The task currently executing on this control plane.",
+    "runId": "Run ID",
+    "quickLinks": "Common workspaces",
+    "recentHint": "Latest local benchmark runs and outcomes.",
+    "viewAll": "View all",
+    "noRecentRuns": "No runs yet",
+    "noRecentRunsHint": "Create a scenario and run a benchmark to see results here.",
+    "live": {
+      "connected": "Connected",
+      "publishRate": "Publish/s",
+      "p95": "P95 latency"
+    },
+    "quick": {
+      "scenarios": "Compose and reuse workloads",
+      "nodes": "Inspect remote agents and capacity"
+    },
     "viewRuns": "View runs",
     "activeRuns": "Active runs",
     "regressions": "Regressions vs baseline",
@@ -126,7 +164,8 @@
       "active": "Active",
       "recent": "Recent",
       "failed": "Failed",
-      "status": "Runtime"
+      "status": "Runtime",
+      "successRate": "Completion rate"
     }
   },
   "nodes": {
@@ -184,6 +223,19 @@
     "title": "Runs",
     "subtitle": "History from the v2 run model.",
     "empty": "No runs yet.",
+    "emptyHint": "Start the first run from Quick Bench or a scenario.",
+    "search": "Search runs",
+    "searchPlaceholder": "Search name, description, or tags",
+    "statusFilter": "Status",
+    "allStatuses": "All statuses",
+    "resultCount": "{count} results",
+    "clearFilters": "Clear filters",
+    "noMatches": "No matching runs",
+    "noMatchesHint": "Try another search term or status filter.",
+    "selectedCount": "{count}/4 selected",
+    "compareHint": "Select at least two runs to compare metric deltas.",
+    "clearSelection": "Clear selection",
+    "noTags": "No tags",
     "workloadCount": "{count} workloads",
     "compareAction": "Select to compare",
     "exitCompare": "Exit compare",
@@ -225,6 +277,14 @@
     "noDescription": "No description",
     "untagged": "untagged",
     "empty": "Create your first scenario with the builder.",
+    "emptyHint": "Scenarios preserve brokers, workloads, and load shapes for repeatable runs.",
+    "search": "Search scenarios",
+    "searchPlaceholder": "Search name, description, or tags",
+    "resultCount": "{count} scenarios",
+    "noMatches": "No matching scenarios",
+    "noMatchesHint": "Try another search term.",
+    "workloadCount": "{count} workloads",
+    "starting": "Starting…",
     "detail": "Scenario detail",
     "runAgain": "Run again",
     "workloads": "Workloads",

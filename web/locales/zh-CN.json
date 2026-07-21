@@ -10,7 +10,9 @@
     "scenarios": "场景",
     "templates": "模板",
     "nodes": "节点",
-    "settings": "设置"
+    "settings": "设置",
+    "workspace": "压测工作台",
+    "workspaceHint": "配置、执行与分析"
   },
   "common": {
     "refresh": "刷新",
@@ -75,6 +77,9 @@
   "a11y": {
     "primaryNavigation": "主导航",
     "language": "语言",
+    "skipToContent": "跳到主要内容",
+    "openNavigation": "打开导航",
+    "closeNavigation": "关闭导航",
     "removeWorkload": "移除工作负载",
     "removeStep": "移除阶段"
   },
@@ -108,9 +113,42 @@
     "start": "启动运行",
     "starting": "启动中..."
   },
+  "command": {
+    "title": "快捷操作",
+    "placeholder": "搜索或跳转",
+    "searchPlaceholder": "输入页面或操作名称…",
+    "open": "快捷操作",
+    "navigate": "前往页面",
+    "action": "执行操作",
+    "empty": "没有匹配的页面或操作"
+  },
   "dashboard": {
     "title": "仪表盘",
     "subtitle": "查看实时状态、最近运行与回归空间。",
+    "controlCenter": "控制中心",
+    "heroBody": "从一个视图掌握执行状态、实时指标和最近结果，并快速开始下一次 MQTT 压测。",
+    "createScenario": "创建压测场景",
+    "liveTelemetry": "实时遥测",
+    "streaming": "正在接收",
+    "standby": "等待运行",
+    "openActiveRun": "打开当前运行",
+    "noActiveHint": "启动快速压测或运行已有场景后，实时指标会显示在这里。",
+    "activeHint": "当前控制面正在执行的任务。",
+    "runId": "运行 ID",
+    "quickLinks": "常用工作区",
+    "recentHint": "最近的本机压测记录与执行结果。",
+    "viewAll": "查看全部",
+    "noRecentRuns": "还没有运行记录",
+    "noRecentRunsHint": "创建场景并执行一次压测后，结果会出现在这里。",
+    "live": {
+      "connected": "当前连接",
+      "publishRate": "发布/秒",
+      "p95": "P95 延迟"
+    },
+    "quick": {
+      "scenarios": "编排并复用 workload",
+      "nodes": "查看远程 Agent 与容量"
+    },
     "viewRuns": "查看运行",
     "activeRuns": "活动运行",
     "regressions": "相对基线回归",
@@ -126,7 +164,8 @@
       "active": "活动",
       "recent": "最近",
       "failed": "失败",
-      "status": "运行时"
+      "status": "运行时",
+      "successRate": "完成率"
     }
   },
   "nodes": {
@@ -184,6 +223,19 @@
     "title": "运行记录",
     "subtitle": "来自 v2 运行模型的历史记录。",
     "empty": "暂无运行记录。",
+    "emptyHint": "从快速压测或场景页面启动第一次运行。",
+    "search": "搜索运行记录",
+    "searchPlaceholder": "搜索名称、描述或标签",
+    "statusFilter": "状态",
+    "allStatuses": "全部状态",
+    "resultCount": "{count} 条结果",
+    "clearFilters": "清除筛选",
+    "noMatches": "没有匹配的运行记录",
+    "noMatchesHint": "尝试修改搜索关键词或状态筛选。",
+    "selectedCount": "已选择 {count}/4",
+    "compareHint": "至少选择 2 次运行即可查看指标差异。",
+    "clearSelection": "清除选择",
+    "noTags": "无标签",
     "workloadCount": "{count} 个 workload",
     "compareAction": "选择对比",
     "exitCompare": "退出对比",
@@ -225,6 +277,14 @@
     "noDescription": "暂无描述",
     "untagged": "未打标签",
     "empty": "使用构建器创建第一个场景。",
+    "emptyHint": "场景可以保存 Broker、workload 和负载曲线，方便重复执行。",
+    "search": "搜索场景",
+    "searchPlaceholder": "搜索名称、描述或标签",
+    "resultCount": "{count} 个场景",
+    "noMatches": "没有匹配的场景",
+    "noMatchesHint": "尝试修改搜索关键词。",
+    "workloadCount": "{count} 个 workload",
+    "starting": "启动中…",
     "detail": "场景详情",
     "runAgain": "再次运行",
     "workloads": "Workload",
