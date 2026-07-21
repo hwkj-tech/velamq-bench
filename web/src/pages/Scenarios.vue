@@ -1,22 +1,63 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
-import { Edit, Play, Plus, Trash2 } from 'lucide-vue-next';
+import { computed, onMounted, ref } from 'vue';
+import { Edit, Layers3, Play, Plus, Search, Trash2, Users } from 'lucide-vue-next';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useScenariosStore } from '@/stores/scenarios';
 import { api } from '@/api/client';
 import { useToast } from '@/composables/useToast';
 import AppEmpty from '@/components/feedback/AppEmpty.vue';
+import AppError from '@/components/feedback/AppError.vue';
+import AppLoading from '@/components/feedback/AppLoading.vue';
 
 const scenarios = useScenariosStore();
 const router = useRouter();
 const { t } = useI18n();
 const toast = useToast();
-onMounted(() => scenarios.load());
+const query = ref('');
+const loading = ref(true);
+const error = ref('');
+const runningIds = ref(new Set<string>());
+const filteredScenarios = computed(() => {
+  const needle = query.value.trim().toLocaleLowerCase();
+  return scenarios.list.filter((scenario) => {
+    const searchable = `${scenario.name} ${scenario.description} ${scenario.tags.join(' ')}`.toLocaleLowerCase();
+    return !needle || searchable.includes(needle);
+  });
+});
+
+onMounted(async () => {
+  try {
+    await scenarios.load();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    loading.value = false;
+  }
+});
 
 async function runScenario(id: string) {
-  const response = await api.runScenario(id);
-  await router.push(`/runs/${response.run_id}`);
+  if (runningIds.value.has(id)) return;
+  runningIds.value.add(id);
+  try {
+    const response = await api.runScenario(id);
+    await router.push(`/runs/${response.run_id}`);
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    runningIds.value.delete(id);
+  }
+}
+
+function workloads(scenario: (typeof scenarios.list)[number]) {
+  return scenario.stages.reduce((sum, stage) => sum + ('parallel' in stage ? stage.parallel.workloads.length : stage.sequential.workloads.length), 0);
+}
+
+function clients(scenario: (typeof scenarios.list)[number]) {
+  return scenario.stages.reduce(
+    (sum, stage) => sum + ('parallel' in stage ? stage.parallel.workloads : stage.sequential.workloads).reduce((count, workload) => count + workload.clients, 0),
+    0,
+  );
 }
 
 async function removeScenario(id: string, name: string) {
@@ -42,18 +83,33 @@ async function removeScenario(id: string, name: string) {
         {{ t('scenarios.new') }}
       </RouterLink>
     </div>
+    <AppError :message="error" />
     <section class="panel">
+      <div class="list-toolbar">
+        <label class="search-control search-control--wide">
+          <Search :size="16" aria-hidden="true" />
+          <span class="sr-only">{{ t('scenarios.search') }}</span>
+          <input v-model="query" type="search" :placeholder="t('scenarios.searchPlaceholder')" />
+        </label>
+        <span class="result-count">{{ t('scenarios.resultCount', { count: filteredScenarios.length }) }}</span>
+        <button v-if="query" class="text-action" type="button" @click="query = ''">{{ t('runs.clearFilters') }}</button>
+      </div>
+      <AppLoading v-if="loading" :label="t('common.loading')" compact />
       <div class="scenario-grid">
-        <article v-for="scenario in scenarios.list" :key="scenario.id" class="scenario-card">
+        <article v-for="scenario in filteredScenarios" :key="scenario.id" class="scenario-card">
           <RouterLink class="scenario-card-main" :to="`/scenarios/${scenario.id}`">
             <strong>{{ scenario.name }}</strong>
             <span>{{ scenario.description || t('scenarios.noDescription') }}</span>
-            <small>{{ scenario.tags.join(', ') || t('scenarios.untagged') }}</small>
+            <div class="scenario-card__stats">
+              <span><Layers3 :size="14" />{{ t('scenarios.workloadCount', { count: workloads(scenario) }) }}</span>
+              <span><Users :size="14" />{{ t('scenarios.clientCount', { count: clients(scenario) }) }}</span>
+            </div>
+            <div class="scenario-card__tags"><small v-for="tag in scenario.tags" :key="tag">{{ tag }}</small><small v-if="!scenario.tags.length">{{ t('scenarios.untagged') }}</small></div>
           </RouterLink>
           <div class="scenario-actions">
-            <button class="secondary-action" type="button" @click="runScenario(scenario.id)">
+            <button class="primary-action" type="button" :disabled="runningIds.has(scenario.id)" @click="runScenario(scenario.id)">
               <Play :size="15" />
-              {{ t('common.run') }}
+              {{ runningIds.has(scenario.id) ? t('scenarios.starting') : t('common.run') }}
             </button>
             <RouterLink class="secondary-action" :to="`/scenarios/${scenario.id}/edit`">
               <Edit :size="15" />
@@ -65,7 +121,14 @@ async function removeScenario(id: string, name: string) {
             </button>
           </div>
         </article>
-        <AppEmpty v-if="scenarios.list.length === 0" :title="t('scenarios.empty')" compact />
+        <AppEmpty
+          v-if="!loading && filteredScenarios.length === 0"
+          :title="query ? t('scenarios.noMatches') : t('scenarios.empty')"
+          :hint="query ? t('scenarios.noMatchesHint') : t('scenarios.emptyHint')"
+          compact
+        >
+          <button v-if="query" class="secondary-action" type="button" @click="query = ''">{{ t('runs.clearFilters') }}</button>
+        </AppEmpty>
       </div>
     </section>
   </section>

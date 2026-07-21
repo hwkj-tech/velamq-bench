@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { GitCompare, RefreshCw, Trash2, X } from 'lucide-vue-next';
+import { GitCompare, RefreshCw, Search, Trash2, X } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import { useRunsStore } from '@/stores/runs';
 import { useToast } from '@/composables/useToast';
@@ -10,6 +10,8 @@ import KpiDeltaTable from '@/components/compare/KpiDeltaTable.vue';
 import OverlayChart from '@/components/compare/OverlayChart.vue';
 import AppEmpty from '@/components/feedback/AppEmpty.vue';
 import AppError from '@/components/feedback/AppError.vue';
+import AppLoading from '@/components/feedback/AppLoading.vue';
+import type { RunStatus } from '@/api/types';
 
 const runs = useRunsStore();
 const route = useRoute();
@@ -21,6 +23,17 @@ const compareMode = ref(Boolean(route.query.ids));
 const selectedIds = ref<string[]>(String(route.query.ids ?? '').split(',').filter(Boolean).slice(0, 4));
 const baselineId = ref(selectedIds.value[0] ?? '');
 const canCompare = computed(() => selectedIds.value.length >= 2);
+const query = ref('');
+const statusFilter = ref<'all' | RunStatus>('all');
+const filteredRuns = computed(() => {
+  const needle = query.value.trim().toLocaleLowerCase();
+  return runs.list.filter((run) => {
+    const matchesStatus = statusFilter.value === 'all' || run.status === statusFilter.value;
+    const searchable = `${run.name} ${run.description} ${run.tags.join(' ')}`.toLocaleLowerCase();
+    return matchesStatus && (!needle || searchable.includes(needle));
+  });
+});
+const hasFilters = computed(() => Boolean(query.value.trim()) || statusFilter.value !== 'all');
 
 onMounted(async () => {
   await runs.load(80);
@@ -47,6 +60,15 @@ function toggleRunSelection(id: string) {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((item) => item !== id)
     : [...selectedIds.value, id].slice(0, 4);
+}
+
+function clearFilters() {
+  query.value = '';
+  statusFilter.value = 'all';
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
 
 async function removeRun(id: string, name: string) {
@@ -82,8 +104,37 @@ async function removeRun(id: string, name: string) {
         </button>
       </div>
     </div>
+    <AppError :message="runs.error ?? ''" />
     <section class="panel">
-      <div class="run-table">
+      <div class="list-toolbar">
+        <label class="search-control">
+          <Search :size="16" aria-hidden="true" />
+          <span class="sr-only">{{ t('runs.search') }}</span>
+          <input v-model="query" type="search" :placeholder="t('runs.searchPlaceholder')" />
+        </label>
+        <label class="filter-control">
+          <span>{{ t('runs.statusFilter') }}</span>
+          <select v-model="statusFilter">
+            <option value="all">{{ t('runs.allStatuses') }}</option>
+            <option value="pending">{{ t('status.pending') }}</option>
+            <option value="running">{{ t('status.running') }}</option>
+            <option value="completed">{{ t('status.completed') }}</option>
+            <option value="stopped">{{ t('status.stopped') }}</option>
+            <option value="failed">{{ t('status.failed') }}</option>
+          </select>
+        </label>
+        <span class="result-count">{{ t('runs.resultCount', { count: filteredRuns.length }) }}</span>
+        <button v-if="hasFilters" class="text-action" type="button" @click="clearFilters">{{ t('runs.clearFilters') }}</button>
+      </div>
+
+      <div v-if="compareMode" class="compare-selection-bar" role="status">
+        <GitCompare :size="18" />
+        <span><strong>{{ t('runs.selectedCount', { count: selectedIds.length }) }}</strong><small>{{ t('runs.compareHint') }}</small></span>
+        <button v-if="selectedIds.length" class="text-action" type="button" @click="selectedIds = []">{{ t('runs.clearSelection') }}</button>
+      </div>
+
+      <AppLoading v-if="runs.loading" :label="t('common.loading')" compact />
+      <div v-else-if="filteredRuns.length" class="run-table">
         <div class="run-table-head run-row-runs" :class="{ comparing: compareMode }" aria-hidden="true">
           <span v-if="compareMode"></span>
           <span>{{ t('runs.table.name') }}</span>
@@ -92,7 +143,7 @@ async function removeRun(id: string, name: string) {
           <span>{{ t('runs.table.startedAt') }}</span>
           <span>{{ t('runs.table.actions') }}</span>
         </div>
-        <div v-for="run in runs.list" :key="run.id" class="run-row run-row-runs" :class="{ comparing: compareMode }">
+        <div v-for="run in filteredRuns" :key="run.id" class="run-row run-row-runs" :class="{ comparing: compareMode }">
           <label v-if="compareMode" class="compare-check" :aria-label="t('runs.selectForCompare', { name: run.name })">
             <input
               type="checkbox"
@@ -101,17 +152,24 @@ async function removeRun(id: string, name: string) {
               @change="toggleRunSelection(run.id)"
             />
           </label>
-          <RouterLink class="row-primary-link" :to="`/runs/${run.id}`">{{ run.name }}</RouterLink>
+          <RouterLink class="row-primary-link run-name-cell" :to="`/runs/${run.id}`"><strong>{{ run.name }}</strong><small>{{ run.tags.join(' · ') || t('runs.noTags') }}</small></RouterLink>
           <span class="status-chip" :data-status="run.status">{{ t(`status.${run.status}`) }}</span>
           <span>{{ t('runs.workloadCount', { count: run.workloads.length }) }}</span>
-          <span>{{ new Date(run.started_at).toLocaleString() }}</span>
+          <span>{{ formatTime(run.started_at) }}</span>
           <button class="table-action danger" type="button" :disabled="run.status === 'running'" @click="removeRun(run.id, run.name)">
             <Trash2 :size="15" />
             {{ t('common.delete') }}
           </button>
         </div>
-        <AppEmpty v-if="!runs.loading && runs.list.length === 0" :title="t('runs.empty')" compact />
       </div>
+      <AppEmpty
+        v-else
+        :title="hasFilters ? t('runs.noMatches') : t('runs.empty')"
+        :hint="hasFilters ? t('runs.noMatchesHint') : t('runs.emptyHint')"
+        compact
+      >
+        <button v-if="hasFilters" class="secondary-action" type="button" @click="clearFilters">{{ t('runs.clearFilters') }}</button>
+      </AppEmpty>
     </section>
 
     <template v-if="compareMode">

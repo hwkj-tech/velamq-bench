@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import {
@@ -7,6 +7,8 @@ import {
   PhCloud,
   PhGauge,
   PhGearSix,
+  PhList,
+  PhMagnifyingGlass,
   PhMoon,
   PhPauseCircle,
   PhPlayCircle,
@@ -36,6 +38,10 @@ const route = useRoute();
 const { t, locale } = useI18n();
 const toast = useToast();
 const quickOpen = ref(false);
+const mobileNavOpen = ref(false);
+const commandOpen = ref(false);
+const commandQuery = ref('');
+const commandInput = ref<HTMLInputElement | null>(null);
 const quickHost = ref('127.0.0.1');
 const quickPort = ref(1883);
 const quickProtocol = ref<BrokerProtocol>('mqtt');
@@ -67,6 +73,36 @@ const activeNav = computed(() => {
   return active?.to ?? '/dashboard';
 });
 
+const commandItems = computed(() => {
+  const query = commandQuery.value.trim().toLocaleLowerCase();
+  const items = [
+    ...navItems.value.map((item) => ({
+      id: item.to,
+      label: item.label,
+      hint: t('command.navigate'),
+      icon: item.icon,
+      run: () => navigateNav(item.to),
+    })),
+    {
+      id: 'quick-bench',
+      label: t('quick.title'),
+      hint: t('command.action'),
+      icon: PhPlayCircle,
+      run: () => {
+        quickOpen.value = true;
+      },
+    },
+    {
+      id: 'toggle-theme',
+      label: t('app.theme'),
+      hint: t('command.action'),
+      icon: ui.isDark ? PhSun : PhMoon,
+      run: () => ui.toggleTheme(),
+    },
+  ];
+  return query ? items.filter((item) => `${item.label} ${item.hint}`.toLocaleLowerCase().includes(query)) : items;
+});
+
 const runtimeIcon = computed(() => {
   if (runtime.status === 'running') {
     return PhPulse;
@@ -84,11 +120,46 @@ const runtimeIcon = computed(() => {
 });
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleGlobalKeydown);
   await Promise.allSettled([runtime.load(), scenarios.load()]);
   if (runtime.activeRunId) {
     runtime.attach(runtime.activeRunId);
   }
 });
+
+onUnmounted(() => window.removeEventListener('keydown', handleGlobalKeydown));
+
+watch(
+  () => route.fullPath,
+  () => {
+    mobileNavOpen.value = false;
+    commandOpen.value = false;
+  },
+);
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
+    event.preventDefault();
+    openCommand();
+    return;
+  }
+  if (event.key === 'Escape') {
+    commandOpen.value = false;
+    mobileNavOpen.value = false;
+  }
+}
+
+async function openCommand() {
+  commandOpen.value = true;
+  commandQuery.value = '';
+  await nextTick();
+  commandInput.value?.focus();
+}
+
+function runCommand(run: () => void) {
+  commandOpen.value = false;
+  run();
+}
 
 function closeQuickSheet() {
   if (!quickBusy.value) {
@@ -102,6 +173,7 @@ function setLanguage(value: string) {
 }
 
 function navigateNav(path: string) {
+  mobileNavOpen.value = false;
   if (path !== route.path) {
     void router.push(path);
   }
@@ -204,34 +276,51 @@ function buildAdHocScenario(brokerProfileId: string): Scenario {
 
 <template>
   <div class="app-shell" :data-theme="ui.resolvedTheme">
+    <a class="skip-link" href="#main-content">{{ t('a11y.skipToContent') }}</a>
     <header class="topbar">
-      <div class="brand-lockup">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 48 48" role="img">
-            <defs>
-              <linearGradient id="fluxLogoGradient" x1="8" x2="38" y1="8" y2="40" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#37c8ff" />
-                <stop offset="0.58" stop-color="#1479ff" />
-                <stop offset="1" stop-color="#16f2c2" />
-              </linearGradient>
-            </defs>
-            <path class="logo-mark" d="M10 8h27.5l-2.6 7.2H18.2l-1.7 5.3h15.8l-2.5 7H14.2L10.4 40H2.8L10 8Z" />
-            <path class="logo-flow" d="M15.5 34.5c7.4-5.7 16-5.7 25.8 0" />
-            <path class="logo-pulse" d="M11.5 25h6.2l2.8-7.8 5.1 16.3 4.3-11.2h6.6" />
-            <circle class="logo-dot" cx="39" cy="12" r="3.2" />
-          </svg>
-        </div>
-        <div>
-          <strong>VelaMQ Bench</strong>
-          <span>{{ t('app.subtitle') }}</span>
+      <div class="topbar-brand-group">
+        <button
+          class="mobile-menu-button toolbar-square-button"
+          type="button"
+          :aria-label="t('a11y.openNavigation')"
+          :aria-expanded="mobileNavOpen"
+          @click="mobileNavOpen = !mobileNavOpen"
+        >
+          <PhList :size="20" weight="bold" />
+        </button>
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48" role="img">
+              <defs>
+                <linearGradient id="fluxLogoGradient" x1="8" x2="38" y1="8" y2="40" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#37c8ff" />
+                  <stop offset="0.58" stop-color="#1479ff" />
+                  <stop offset="1" stop-color="#16f2c2" />
+                </linearGradient>
+              </defs>
+              <path class="logo-mark" d="M10 8h27.5l-2.6 7.2H18.2l-1.7 5.3h15.8l-2.5 7H14.2L10.4 40H2.8L10 8Z" />
+              <path class="logo-flow" d="M15.5 34.5c7.4-5.7 16-5.7 25.8 0" />
+              <path class="logo-pulse" d="M11.5 25h6.2l2.8-7.8 5.1 16.3 4.3-11.2h6.6" />
+              <circle class="logo-dot" cx="39" cy="12" r="3.2" />
+            </svg>
+          </div>
+          <div>
+            <strong>VelaMQ Bench</strong>
+            <span>{{ t('app.subtitle') }}</span>
+          </div>
         </div>
       </div>
       <div class="topbar-actions">
+        <button class="command-trigger" type="button" @click="openCommand">
+          <PhMagnifyingGlass :size="16" weight="bold" />
+          <span>{{ t('command.placeholder') }}</span>
+          <kbd>⌘ K</kbd>
+        </button>
         <el-button class="quick-bench-button" type="primary" size="large" @click="quickOpen = true">
           <span class="toolbar-button-icon">
             <PhPlayCircle :size="18" weight="duotone" />
           </span>
-          {{ t('quick.title') }}
+          <span class="quick-bench-label">{{ t('quick.title') }}</span>
         </el-button>
         <span class="runtime-tag" :data-status="runtime.status">
           <component :is="runtimeIcon" :size="15" weight="duotone" />
@@ -260,7 +349,19 @@ function buildAdHocScenario(brokerProfileId: string): Scenario {
       </div>
     </header>
 
-    <aside class="sidebar">
+    <button
+      v-if="mobileNavOpen"
+      class="mobile-nav-backdrop"
+      type="button"
+      :aria-label="t('a11y.closeNavigation')"
+      @click="mobileNavOpen = false"
+    />
+
+    <aside class="sidebar" :class="{ 'is-open': mobileNavOpen }">
+      <div class="sidebar-heading">
+        <span>{{ t('nav.workspace') }}</span>
+        <small>{{ t('nav.workspaceHint') }}</small>
+      </div>
       <nav :aria-label="t('a11y.primaryNavigation')">
         <el-menu class="app-menu" :default-active="activeNav" @select="navigateNav">
           <el-menu-item v-for="item in navItems" :key="item.to" :index="item.to">
@@ -269,14 +370,53 @@ function buildAdHocScenario(brokerProfileId: string): Scenario {
           </el-menu-item>
         </el-menu>
       </nav>
+      <div class="sidebar-footer">
+        <button type="button" @click="openCommand">
+          <PhMagnifyingGlass :size="15" />
+          <span>{{ t('command.open') }}</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <div class="sidebar-locales" :aria-label="t('a11y.language')">
+          <button type="button" :class="{ active: locale === 'zh-CN' }" @click="setLanguage('zh-CN')">中文</button>
+          <button type="button" :class="{ active: locale === 'en' }" @click="setLanguage('en')">EN</button>
+        </div>
+      </div>
     </aside>
 
-    <main class="workspace">
+    <main id="main-content" class="workspace" tabindex="-1">
       <RouterView />
     </main>
 
+    <section
+      v-if="commandOpen"
+      class="command-backdrop"
+      role="presentation"
+      @click.self="commandOpen = false"
+    >
+      <div class="command-palette" role="dialog" aria-modal="true" :aria-label="t('command.title')">
+        <div class="command-search">
+          <PhMagnifyingGlass :size="19" />
+          <input
+            ref="commandInput"
+            v-model="commandQuery"
+            type="search"
+            :placeholder="t('command.searchPlaceholder')"
+            @keydown.enter="commandItems[0] && runCommand(commandItems[0].run)"
+          />
+          <kbd>ESC</kbd>
+        </div>
+        <div class="command-results">
+          <button v-for="item in commandItems" :key="item.id" type="button" @click="runCommand(item.run)">
+            <component :is="item.icon" :size="18" weight="duotone" />
+            <span><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span>
+          </button>
+          <p v-if="commandItems.length === 0" class="command-empty">{{ t('command.empty') }}</p>
+        </div>
+      </div>
+    </section>
+
     <section v-if="quickOpen" class="sheet-backdrop" @click.self="closeQuickSheet" @keydown.esc="closeQuickSheet">
-      <form class="quick-sheet" @submit.prevent="startQuickBench">
+      <form class="quick-sheet" role="dialog" aria-modal="true" :aria-label="t('quick.title')" @submit.prevent="startQuickBench">
         <div class="sheet-head">
           <div>
             <h2>{{ t('quick.title') }}</h2>
